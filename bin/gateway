@@ -5,6 +5,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 cd "$ROOT_DIR"
 
+# Self-bootstrap via Nix flake if environment tools are not in PATH
+if [ -z "${AI_INFRA_SHELL:-}" ] && ! command -v jq >/dev/null 2>&1; then
+  exec nix develop "$ROOT_DIR" --command "$0" "$@"
+fi
+
 if [ ! -d ".venv" ]; then
   echo "Error: Virtual environment .venv not found. Run 'uv venv .venv && source .venv/bin/activate && uv pip install \"litellm[proxy]\"' first." >&2
   exit 1

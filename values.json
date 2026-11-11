@@ -8,6 +8,7 @@
   "local_inference": {
     "host": "127.0.0.1",
     "port": 11434,
+    "models_dir": "models",
     "default_model": "qwen2.5:7b",
     "coder_model": "qwen2.5-coder:7b"
   },

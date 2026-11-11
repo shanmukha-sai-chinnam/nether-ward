@@ -20,6 +20,9 @@ npm-debug.log*
 promptfoo.log
 *.log
 
+# Local model weights (GGUF / Safetensors)
+models/
+
 # Local secrets & API keys
 .env
 .env.local

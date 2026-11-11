@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+cd "$ROOT_DIR"
+
+# Self-bootstrap via Nix flake if ollama is not currently in PATH
+if [ -z "${AI_INFRA_SHELL:-}" ] && ! command -v ollama >/dev/null 2>&1; then
+  exec nix develop "$ROOT_DIR" --command "$0" "$@"
+fi
+
+HOST=$(jq -r '.local_inference.host' values.json 2>/dev/null || echo "127.0.0.1")
+PORT=$(jq -r '.local_inference.port' values.json 2>/dev/null || echo "11434")
+MODELS_DIR=$(jq -r '.local_inference.models_dir' values.json 2>/dev/null || echo "models")
+FULL_MODELS_DIR="${ROOT_DIR}/${MODELS_DIR}"
+
+mkdir -p "$FULL_MODELS_DIR"
+
+export OLLAMA_HOST="${HOST}:${PORT}"
+export OLLAMA_MODELS="$FULL_MODELS_DIR"
+# Leverage all 8 cores on the Intel Core Ultra 7 258V
+export OLLAMA_NUM_PARALLEL=2
+export OLLAMA_FLASH_ATTENTION=1
+
+echo -e "\033[1;34m==>\033[0m \033[1mStarting Local Inference Engine (Ollama) on http://${OLLAMA_HOST}...\033[0m"
+echo -e "\033[1;34m==>\033[0m \033[1mModel Weights Directory:\033[0m ${FULL_MODELS_DIR}"
+echo -e "\033[1;34m==>\033[0m \033[1mHardware Profile:\033[0m Intel Lunar Lake (AVX-VNNI acceleration active)"
+
+exec ollama serve "$@"

@@ -26,6 +26,9 @@
           name = "ai-infra-shell";
 
           buildInputs = with pkgs; [
+            # AI & Local Inference Runtimes
+            ollama
+
             # Python ecosystem
             pythonEnv
             uv
@@ -49,6 +52,7 @@
           ];
 
           shellHook = ''
+            export AI_INFRA_SHELL=1
             export UV_PYTHON_PREFERENCE="only-system"
             export UV_PYTHON="${pythonEnv}/bin/python3"
             export AI_INFRA_ROOT="$(pwd)"
@@ -64,6 +68,7 @@
             echo -e "  \033[1;34mPython:\033[0m       $(${pythonEnv}/bin/python3 --version 2>&1)"
             echo -e "  \033[1;34mUV:\033[0m           $(${pkgs.uv}/bin/uv --version 2>&1)"
             echo -e "  \033[1;34mNode.js:\033[0m      $(${pkgs.nodejs_22}/bin/node --version 2>&1)"
+            echo -e "  \033[1;34mOllama:\033[0m       v$(${pkgs.ollama}/bin/ollama --version 2>&1 | awk '/client version/{print $NF}')"
             echo -e "  \033[1;34mArchitecture:\033[0m Intel Lunar Lake (8 cores, AVX-VNNI active)"
             echo -e "\033[1;33m--------------------------------------------------------\033[0m"
           '';
