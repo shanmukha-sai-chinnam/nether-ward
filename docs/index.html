@@ -1,0 +1,953 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-[#1d2021] text-[#ebdbb2]">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nether Ward | Autonomous AI Security Sentinel &amp; Adversarial Verification Platform</title>
+  <meta name="description" content="Technical documentation and architecture specification for Nether Ward: an autonomous AI security scanner, threat engine, runtime proxy, and adversarial evaluation harness written in pure compiled Rust and packaged with Nix.">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            gb: {
+              bgHard: '#1d2021',
+              bg: '#282828',
+              bgSoft: '#32302f',
+              bg1: '#3c3836',
+              bg2: '#504945',
+              bg3: '#665c54',
+              bg4: '#7c6f64',
+              fg: '#ebdbb2',
+              fg0: '#fbf1c7',
+              fg2: '#d5c4a1',
+              fg3: '#bdae93',
+              fg4: '#a89984',
+              gray: '#928374',
+              red: '#fb4934',
+              redDim: '#cc241d',
+              green: '#b8bb26',
+              greenDim: '#98971a',
+              yellow: '#fabd2f',
+              yellowDim: '#d79921',
+              blue: '#83a598',
+              blueDim: '#458588',
+              purple: '#d3869b',
+              purpleDim: '#b16286',
+              aqua: '#8ec07c',
+              aquaDim: '#689d6a',
+              orange: '#fe8019',
+              orangeDim: '#af3a03',
+            }
+          },
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: #1d2021; }
+    ::-webkit-scrollbar-thumb { background: #3c3836; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #504945; }
+    
+    .gruvbox-card {
+      background-color: #282828;
+      border: 1px solid #3c3836;
+      transition: border-color 0.15s ease, transform 0.15s ease;
+    }
+    .gruvbox-card:hover {
+      border-color: #504945;
+    }
+    .tab-btn {
+      color: #a89984;
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s ease;
+    }
+    .tab-btn:hover {
+      color: #ebdbb2;
+      border-bottom-color: #504945;
+    }
+    .tab-btn.active {
+      color: #fabd2f;
+      border-bottom-color: #fabd2f;
+      background-color: rgba(250, 189, 47, 0.05);
+    }
+    .code-block {
+      background-color: #1d2021;
+      border: 1px solid #3c3836;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .pill {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem;
+      padding: 0.125rem 0.5rem;
+      border-radius: 0.25rem;
+      border-width: 1px;
+    }
+  </style>
+</head>
+<body class="min-h-full flex flex-col font-sans bg-[#1d2021] text-[#ebdbb2]">
+
+  <!-- Top Sticky Navigation Bar -->
+  <header class="sticky top-0 z-50 bg-[#282828] border-b border-[#3c3836] shadow-md">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex items-center justify-between h-14">
+        
+        <!-- Brand & Context -->
+        <div class="flex items-center gap-3">
+          <a href="#overview" onclick="switchTab('overview')" class="flex items-center gap-2 group">
+            <span class="font-mono font-bold text-base sm:text-lg text-[#fabd2f] tracking-tight group-hover:text-[#fe8019] transition">nether-ward</span>
+            <span class="pill bg-[#1d2021] text-[#8ec07c] border-[#3c3836]">v0.2.0</span>
+          </a>
+          <span class="hidden md:inline-block text-xs font-mono text-[#928374]">|</span>
+          <span class="hidden md:inline-block text-xs font-mono text-[#a89984]">Pure Rust AI Security Platform</span>
+        </div>
+
+        <!-- Links to Repos & Live Artifacts -->
+        <div class="flex items-center gap-2 sm:gap-3 text-xs font-mono">
+          <a href="./redteam_report.html" target="_blank" class="hidden sm:flex px-2.5 py-1 rounded bg-[#32302f] hover:bg-[#3c3836] border border-[#504945] text-[#8ec07c] hover:text-[#b8bb26] transition items-center gap-1">
+            <span>Red Team Report</span>
+            <span class="text-[#928374]">↗</span>
+          </a>
+          <a href="./sast.sarif" target="_blank" class="hidden md:flex px-2.5 py-1 rounded bg-[#32302f] hover:bg-[#3c3836] border border-[#504945] text-[#83a598] hover:text-[#fbf1c7] transition items-center gap-1">
+            <span>SARIF</span>
+            <span class="text-[#928374]">↗</span>
+          </a>
+          <a href="https://github.com/shanmukha-sai-chinnam/nether-ward" target="_blank" rel="noreferrer" class="px-2.5 py-1 rounded bg-[#32302f] hover:bg-[#3c3836] border border-[#504945] text-[#ebdbb2] hover:text-[#fbf1c7] transition flex items-center gap-1.5">
+            <span>GitHub</span>
+            <span class="text-[#928374]">↗</span>
+          </a>
+        </div>
+      </div>
+
+      <!-- Horizontal Tab Navigation Bar -->
+      <nav class="flex space-x-1 sm:space-x-2 overflow-x-auto no-scrollbar border-t border-[#3c3836]/60 text-xs font-mono pt-1">
+        <button onclick="switchTab('overview')" id="tab-btn-overview" class="tab-btn active px-3 py-2 whitespace-nowrap font-medium flex items-center gap-1.5">
+          <span class="text-[#928374]">1.</span> <span>Overview &amp; Vectors</span>
+        </button>
+        <button onclick="switchTab('threat')" id="tab-btn-threat" class="tab-btn px-3 py-2 whitespace-nowrap font-medium flex items-center gap-1.5">
+          <span class="text-[#928374]">2.</span> <span>Entropy &amp; Triage</span>
+        </button>
+        <button onclick="switchTab('sast')" id="tab-btn-sast" class="tab-btn px-3 py-2 whitespace-nowrap font-medium flex items-center gap-1.5">
+          <span class="text-[#928374]">3.</span> <span>SAST Rulebook</span>
+        </button>
+        <button onclick="switchTab('proxy')" id="tab-btn-proxy" class="tab-btn px-3 py-2 whitespace-nowrap font-medium flex items-center gap-1.5">
+          <span class="text-[#928374]">4.</span> <span>MCP Proxy &amp; Gateway</span>
+        </button>
+        <button onclick="switchTab('redteam')" id="tab-btn-redteam" class="tab-btn px-3 py-2 whitespace-nowrap font-medium flex items-center gap-1.5">
+          <span class="text-[#928374]">5.</span> <span>Red Team Harness</span>
+        </button>
+        <button onclick="switchTab('cicd')" id="tab-btn-cicd" class="tab-btn px-3 py-2 whitespace-nowrap font-medium flex items-center gap-1.5">
+          <span class="text-[#928374]">6.</span> <span>CI/CD &amp; Nix Packaging</span>
+        </button>
+        <button onclick="switchTab('cli')" id="tab-btn-cli" class="tab-btn px-3 py-2 whitespace-nowrap font-medium flex items-center gap-1.5">
+          <span class="text-[#928374]">7.</span> <span>CLI Manual &amp; API</span>
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Live Subsystem Filter & Quick Search Strip -->
+  <div class="bg-[#282828] border-b border-[#3c3836] py-2">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
+      <div class="flex items-center gap-2 text-xs font-mono text-[#a89984]">
+        <span class="text-[#fabd2f] font-bold">[FILTER]</span>
+        <span>Quick search across security rules, engines, endpoints, and commands:</span>
+      </div>
+      <div class="relative flex-1 max-w-md">
+        <input type="text" id="globalSearch" placeholder="Filter by rule, command, or parameter (e.g. NW-SEC, proxy, entropy, sarif)..." 
+               onkeyup="handleFilter()" 
+               class="w-full px-3 py-1.5 rounded bg-[#1d2021] border border-[#3c3836] text-xs font-mono text-[#ebdbb2] placeholder-[#7c6f64] focus:outline-none focus:border-[#fabd2f]">
+        <button onclick="clearSearch()" id="clearSearchBtn" class="hidden absolute right-2.5 top-1.5 text-xs text-[#928374] hover:text-[#ebdbb2]">ESC</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Container Viewport -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+
+    <!-- ================================================================= -->
+    <!-- TAB 1: OVERVIEW & THREAT VECTORS                                  -->
+    <!-- ================================================================= -->
+    <section id="pane-overview" class="tab-pane space-y-6">
+      
+      <!-- Hero Card -->
+      <div class="gruvbox-card rounded-lg p-5 sm:p-6">
+        <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-[#3c3836] pb-5">
+          <div>
+            <h1 class="text-xl sm:text-2xl font-bold font-mono text-[#fbf1c7] tracking-tight">
+              Nether Ward: Autonomous AI Security Platform
+            </h1>
+            <p class="text-sm text-[#a89984] mt-1.5 max-w-3xl leading-relaxed">
+              Static security scanner, real-time tool firewall, Shannon entropy threat profiler, and adversarial red-team verification harness. Compiled strictly in pure Rust with hermetic declarative Nix packaging. Zero Python. Zero Node.js. Zero shell scripts.
+            </p>
+          </div>
+          
+          <div class="flex flex-wrap lg:flex-col gap-2 shrink-0">
+            <button onclick="switchTab('threat')" class="px-3 py-1.5 rounded bg-[#32302f] hover:bg-[#3c3836] border border-[#504945] text-xs font-mono text-[#8ec07c] flex items-center justify-center gap-1.5 transition">
+              <span>Entropy Profiler →</span>
+            </button>
+            <button onclick="switchTab('proxy')" class="px-3 py-1.5 rounded bg-[#32302f] hover:bg-[#3c3836] border border-[#504945] text-xs font-mono text-[#fabd2f] flex items-center justify-center gap-1.5 transition">
+              <span>MCP Stdio Proxy →</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Architectural Invariants Grid -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 pt-5">
+          <div class="p-3 rounded bg-[#1d2021] border border-[#3c3836]">
+            <div class="text-[10px] uppercase font-mono text-[#928374] tracking-wider">Language Runtime</div>
+            <div class="text-sm font-bold font-mono text-[#fabd2f] mt-1">Pure Rust 2021</div>
+            <div class="text-[11px] text-[#a89984] mt-0.5">Zero interpreter overhead</div>
+          </div>
+          <div class="p-3 rounded bg-[#1d2021] border border-[#3c3836]">
+            <div class="text-[10px] uppercase font-mono text-[#928374] tracking-wider">Packaging &amp; CI</div>
+            <div class="text-sm font-bold font-mono text-[#8ec07c] mt-1">Nix Flakes Hermetic</div>
+            <div class="text-[11px] text-[#a89984] mt-0.5">Zero drift guarantee</div>
+          </div>
+          <div class="p-3 rounded bg-[#1d2021] border border-[#3c3836]">
+            <div class="text-[10px] uppercase font-mono text-[#928374] tracking-wider">Test Suite</div>
+            <div class="text-sm font-bold font-mono text-[#83a598] mt-1">63 Tests Passed</div>
+            <div class="text-[11px] text-[#a89984] mt-0.5">41 Unit + 22 Integration</div>
+          </div>
+          <div class="p-3 rounded bg-[#1d2021] border border-[#3c3836]">
+            <div class="text-[10px] uppercase font-mono text-[#928374] tracking-wider">Dispatch Latency</div>
+            <div class="text-sm font-bold font-mono text-[#b8bb26] mt-1">&lt; 15 Microseconds</div>
+            <div class="text-[11px] text-[#a89984] mt-0.5">Native static binary</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Problem Statement & The 5-Layer AI Threat Surface -->
+      <div class="gruvbox-card rounded-lg p-5">
+        <h2 class="text-base font-bold font-mono text-[#fabd2f] mb-3 flex items-center gap-2">
+          <span>The 5-Layer Autonomous AI Attack Surface</span>
+        </h2>
+        <p class="text-xs text-[#a89984] leading-relaxed mb-4">
+          Autonomous coding agents possess operational agency: they parse untrusted third-party inputs, generate executable code, invoke external tools via protocols like MCP, and interact with the host filesystem. Traditional application security frameworks are structurally blind to non-deterministic, semantic threats. Nether Ward addresses vulnerabilities across all five attack layers:
+        </p>
+
+        <div class="grid grid-cols-1 md:grid-cols-5 gap-3 text-xs font-mono">
+          <div class="p-3.5 rounded bg-[#1d2021] border border-[#3c3836]">
+            <div class="text-[#fabd2f] font-bold pb-1 border-b border-[#3c3836]">1. Linguistic Vector</div>
+            <p class="text-[#a89984] mt-2 leading-relaxed">Direct prompt injections, jailbreak tokens, system prompt overrides, delimiter smuggling, and safety filter evasions.</p>
+          </div>
+          <div class="p-3.5 rounded bg-[#1d2021] border border-[#3c3836]">
+            <div class="text-[#8ec07c] font-bold pb-1 border-b border-[#3c3836]">2. Semantic Context</div>
+            <p class="text-[#a89984] mt-2 leading-relaxed">Indirect prompt injections via ingested web data, goal hijacking, context confusion, and malicious markdown embedding.</p>
+          </div>
+          <div class="p-3.5 rounded bg-[#1d2021] border border-[#3c3836]">
+            <div class="text-[#83a598] font-bold pb-1 border-b border-[#3c3836]">3. Supply Chain</div>
+            <p class="text-[#a89984] mt-2 leading-relaxed">Pickle deserialization exploits, poisoned model weights, unsafe PyTorch checkpoints, and malicious dependencies.</p>
+          </div>
+          <div class="p-3.5 rounded bg-[#1d2021] border border-[#3c3836]">
+            <div class="text-[#d3869b] font-bold pb-1 border-b border-[#3c3836]">4. Code &amp; SAST</div>
+            <p class="text-[#a89984] mt-2 leading-relaxed">Synthesized insecure code (eval, os.system, shell injection), hardcoded cloud credentials, and API key exposures.</p>
+          </div>
+          <div class="p-3.5 rounded bg-[#1d2021] border border-[#3c3836]">
+            <div class="text-[#fb4934] font-bold pb-1 border-b border-[#3c3836]">5. System Execution</div>
+            <p class="text-[#a89984] mt-2 leading-relaxed">Outbound reverse shells, unconfirmed destructive filesystem deletions (rm -rf /), and unauthorized host reconnaissance.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Comparative Architecture Table -->
+      <div class="gruvbox-card rounded-lg p-5">
+        <h2 class="text-base font-bold font-mono text-[#8ec07c] mb-3">Architectural Comparison: Nether Ward vs. Legacy Tooling</h2>
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs font-mono text-left border-collapse">
+            <thead>
+              <tr class="border-b border-[#3c3836] text-[#928374]">
+                <th class="py-2.5 px-3">Evaluation Metric</th>
+                <th class="py-2.5 px-3">Legacy Tooling (Python / Node.js)</th>
+                <th class="py-2.5 px-3 text-[#fabd2f]">Nether Ward (Rust + Nix)</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-[#3c3836]/60 text-[#a89984]">
+              <tr>
+                <td class="py-2.5 px-3 font-semibold text-[#ebdbb2]">Runtime Dependencies</td>
+                <td class="py-2.5 px-3 text-[#fb4934]">Hundreds of volatile pip / npm packages</td>
+                <td class="py-2.5 px-3 text-[#b8bb26] font-bold">Zero external runtime dependencies (single binary)</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 px-3 font-semibold text-[#ebdbb2]">Execution Environment</td>
+                <td class="py-2.5 px-3 text-[#fb4934]">Mutable virtualenvs with frequent lockfile drift</td>
+                <td class="py-2.5 px-3 text-[#b8bb26]">100% Hermetic Declarative Reproducibility via Nix</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 px-3 font-semibold text-[#ebdbb2]">Inspection Overhead</td>
+                <td class="py-2.5 px-3">150ms – 1,200ms interpreter bootstrap latency</td>
+                <td class="py-2.5 px-3 text-[#b8bb26] font-bold">&lt; 15 microseconds native machine code dispatch</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 px-3 font-semibold text-[#ebdbb2]">Memory Safety</td>
+                <td class="py-2.5 px-3">Interpreted GIL or V8 engine garbage collection pauses</td>
+                <td class="py-2.5 px-3 text-[#b8bb26]">Compile-time borrow check guarantees, zero GC</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 px-3 font-semibold text-[#ebdbb2]">CI/CD Security Verification</td>
+                <td class="py-2.5 px-3">Fragmented linters requiring multi-language setups</td>
+                <td class="py-2.5 px-3 text-[#b8bb26]">Native SARIF v2.1.0, JUnit XML, and SPDX SBOM</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ================================================================= -->
+    <!-- TAB 2: ENTROPY & THREAT TRIAGE                                    -->
+    <!-- ================================================================= -->
+    <section id="pane-threat" class="tab-pane hidden space-y-6">
+
+      <div class="gruvbox-card rounded-lg p-5">
+        <h2 class="text-base font-bold font-mono text-[#fabd2f] mb-2">Shannon Entropy Profiling &amp; Byte Triage</h2>
+        <p class="text-xs text-[#a89984] leading-relaxed mb-4">
+          Binary stagers, packed shellcode, and encrypted command-and-control backdoors exhibit statistical uniformity drastically distinct from natural language or structured source code. Nether Ward calculates both global Shannon entropy and localized sliding-window entropy across raw byte streams.
+        </p>
+
+        <!-- Entropy Formula Card -->
+        <div class="p-4 rounded bg-[#1d2021] border border-[#3c3836] mb-4">
+          <div class="text-xs font-mono text-[#fabd2f] font-semibold mb-1">Shannon Entropy Mathematical Definition:</div>
+          <div class="text-sm font-mono text-[#8ec07c] py-2">
+            H(X) = - &sum;<sub>i=1</sub><sup>n</sup> P(x<sub>i</sub>) &times; log<sub>2</sub> P(x<sub>i</sub>)
+          </div>
+          <p class="text-xs text-[#928374] mt-1">
+            Where <code class="text-[#ebdbb2]">P(x<sub>i</sub>)</code> represents the empirical frequency probability of byte value <code class="text-[#ebdbb2]">i</code> (0x00 to 0xFF) across the evaluated byte slice. The result ranges from 0.0000 (homogeneous) to 8.0000 bits/byte (pure uniform random/encrypted data).
+          </p>
+        </div>
+
+        <!-- Entropy Classification Tiers -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs font-mono">
+          <div class="p-3 rounded bg-[#1d2021] border border-[#3c3836]">
+            <div class="flex items-center justify-between border-b border-[#3c3836] pb-1.5 mb-1.5">
+              <span class="text-[#b8bb26] font-bold">Normal Tier</span>
+              <span class="pill bg-[#282828] text-[#b8bb26] border-[#3c3836]">&lt; 6.00 bits</span>
+            </div>
+            <p class="text-[#a89984]">Plaintext source code, markdown documentation, standard JSON/YAML configuration formats.</p>
+          </div>
+          <div class="p-3 rounded bg-[#1d2021] border border-[#3c3836]">
+            <div class="flex items-center justify-between border-b border-[#3c3836] pb-1.5 mb-1.5">
+              <span class="text-[#fabd2f] font-bold">Elevated Tier</span>
+              <span class="pill bg-[#282828] text-[#fabd2f] border-[#3c3836]">6.00 – 7.20 bits</span>
+            </div>
+            <p class="text-[#a89984]">Compressed archives, minified JavaScript, high-density binary tables, compiled assets.</p>
+          </div>
+          <div class="p-3 rounded bg-[#1d2021] border border-[#3c3836]">
+            <div class="flex items-center justify-between border-b border-[#3c3836] pb-1.5 mb-1.5">
+              <span class="text-[#fb4934] font-bold">High / Critical Tier</span>
+              <span class="pill bg-[#282828] text-[#fb4934] border-[#3c3836]">&ge; 7.20 bits</span>
+            </div>
+            <p class="text-[#a89984]">Cryptographic ciphertext, packed binary shellcode, obfuscated loaders, memory stagers.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sliding-Window Stager Detection -->
+      <div class="gruvbox-card rounded-lg p-5">
+        <h2 class="text-base font-bold font-mono text-[#8ec07c] mb-2">256-Byte Sliding-Window Entropy Engine</h2>
+        <p class="text-xs text-[#a89984] leading-relaxed mb-4">
+          Attackers evade global entropy scanners by embedding small (e.g. 256-byte) high-entropy shellcode chunks within large (e.g. 200KB) low-entropy benign files, keeping overall file entropy below 5.0. Nether Ward implements sliding-window analysis with a 256-byte window and 64-byte stride to isolate embedded stagers and report their exact byte offsets.
+        </p>
+
+        <div class="p-4 rounded bg-[#1d2021] border border-[#3c3836] text-xs font-mono space-y-2">
+          <div class="text-[#928374]"># Example: Localized stager detected in datasets/threat_samples/staged_payload.bin</div>
+          <div class="text-[#ebdbb2]">$ nether-ward threat --sample datasets/threat_samples/staged_payload.bin</div>
+          <div class="text-[#83a598] pt-2">Payload Size            : 4096 bytes</div>
+          <div class="text-[#83a598]">Shannon Entropy         : 4.8214 bits/byte (Normal - Plaintext or Structured Code)</div>
+          <div class="text-[#fb4934] font-bold">Max Windowed Entropy    : 7.9102 bits/byte (HIGH RISK)</div>
+          <div class="text-[#fb4934]">Detected Indicators     : Localized high entropy stager detected at offset 0x800 (window entropy: 7.91)</div>
+          <div class="text-[#fb4934] font-bold">Threat Severity         : CRITICAL</div>
+        </div>
+      </div>
+
+      <!-- Heuristic Indicators -->
+      <div class="gruvbox-card rounded-lg p-5">
+        <h2 class="text-base font-bold font-mono text-[#d3869b] mb-2">Autonomous Heuristic Pattern Engine</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs font-mono">
+          <div class="p-3 rounded bg-[#1d2021] border border-[#3c3836]">
+            <div class="text-[#fb4934] font-bold">/dev/tcp/ &amp; nc -e</div>
+            <div class="text-[#a89984] mt-1">Interactive reverse shell network socket redirection and netcat execution wrappers.</div>
+          </div>
+          <div class="p-3 rounded bg-[#1d2021] border border-[#3c3836]">
+            <div class="text-[#fb4934] font-bold">rm -rf / &amp; rm -fr ~</div>
+            <div class="text-[#a89984] mt-1">Unconfirmed destructive recursive filesystem deletion invocations at boundary gates.</div>
+          </div>
+          <div class="p-3 rounded bg-[#1d2021] border border-[#3c3836]">
+            <div class="text-[#fabd2f] font-bold">cat /etc/shadow &amp; id_rsa</div>
+            <div class="text-[#a89984] mt-1">Reconnaissance against local system shadow hashes, password files, and private SSH keys.</div>
+          </div>
+          <div class="p-3 rounded bg-[#1d2021] border border-[#3c3836]">
+            <div class="text-[#fabd2f] font-bold">IEX &amp; DownloadString</div>
+            <div class="text-[#a89984] mt-1">PowerShell in-memory web download stagers bypassing disk logging controls.</div>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ================================================================= -->
+    <!-- TAB 3: SAST RULEBOOK & CREDENTIAL SANITIZATION                   -->
+    <!-- ================================================================= -->
+    <section id="pane-sast" class="tab-pane hidden space-y-6">
+
+      <div class="gruvbox-card rounded-lg p-5">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#3c3836] pb-3 mb-4">
+          <div>
+            <h2 class="text-base font-bold font-mono text-[#fabd2f]">Static Application Security Testing (SAST) Rulebook</h2>
+            <p class="text-xs text-[#a89984] mt-0.5">Comprehensive catalog of built-in deterministic vulnerability rules.</p>
+          </div>
+          <span class="pill bg-[#1d2021] text-[#8ec07c] border-[#3c3836]">20 Active Rules</span>
+        </div>
+
+        <!-- Rules Table -->
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs font-mono text-left border-collapse">
+            <thead>
+              <tr class="border-b border-[#3c3836] text-[#928374]">
+                <th class="py-2 px-2.5">Rule ID</th>
+                <th class="py-2 px-2.5">Severity</th>
+                <th class="py-2 px-2.5">Category</th>
+                <th class="py-2 px-2.5">Title &amp; Detection Target</th>
+                <th class="py-2 px-2.5">Remediation Action</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-[#3c3836]/60 text-[#a89984]">
+              <tr>
+                <td class="py-2.5 px-2.5 font-bold text-[#fabd2f]">NW-SEC-001</td>
+                <td class="py-2.5 px-2.5"><span class="pill bg-[#1d2021] text-[#fb4934] border-[#fb4934]">CRITICAL</span></td>
+                <td class="py-2.5 px-2.5">Secrets</td>
+                <td class="py-2.5 px-2.5 text-[#ebdbb2]">Hardcoded AWS Access Key ID (AKIA[0-9A-Z]{16})</td>
+                <td class="py-2.5 px-2.5">Revoke IAM credential immediately; inject via environment variables.</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 px-2.5 font-bold text-[#fabd2f]">NW-SEC-002</td>
+                <td class="py-2.5 px-2.5"><span class="pill bg-[#1d2021] text-[#fe8019] border-[#fe8019]">HIGH</span></td>
+                <td class="py-2.5 px-2.5">Secrets</td>
+                <td class="py-2.5 px-2.5 text-[#ebdbb2]">Exposed GitHub Personal Access Token (ghp_[A-Za-z0-9]{36})</td>
+                <td class="py-2.5 px-2.5">Rotate GitHub token and review repository read permissions.</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 px-2.5 font-bold text-[#fabd2f]">NW-SEC-003</td>
+                <td class="py-2.5 px-2.5"><span class="pill bg-[#1d2021] text-[#fe8019] border-[#fe8019]">HIGH</span></td>
+                <td class="py-2.5 px-2.5">Secrets</td>
+                <td class="py-2.5 px-2.5 text-[#ebdbb2]">Exposed Google Cloud / Gemini API Key (AIzaSy[A-Za-z0-9_-]{33})</td>
+                <td class="py-2.5 px-2.5">Restrict API key scope in Google Cloud Console and rotate.</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 px-2.5 font-bold text-[#fabd2f]">NW-SEC-004</td>
+                <td class="py-2.5 px-2.5"><span class="pill bg-[#1d2021] text-[#fe8019] border-[#fe8019]">HIGH</span></td>
+                <td class="py-2.5 px-2.5">Secrets</td>
+                <td class="py-2.5 px-2.5 text-[#ebdbb2]">Exposed OpenAI API Secret Key (sk-[A-Za-z0-9]{20,})</td>
+                <td class="py-2.5 px-2.5">Invalidate API key in platform console and utilize keyvaults.</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 px-2.5 font-bold text-[#fabd2f]">NW-SEC-005</td>
+                <td class="py-2.5 px-2.5"><span class="pill bg-[#1d2021] text-[#fe8019] border-[#fe8019]">HIGH</span></td>
+                <td class="py-2.5 px-2.5">Secrets</td>
+                <td class="py-2.5 px-2.5 text-[#ebdbb2]">Exposed Anthropic Claude API Key (sk-ant-[A-Za-z0-9_-]{20,})</td>
+                <td class="py-2.5 px-2.5">Rotate token immediately and ensure no context leakage.</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 px-2.5 font-bold text-[#fabd2f]">NW-SEC-006</td>
+                <td class="py-2.5 px-2.5"><span class="pill bg-[#1d2021] text-[#fb4934] border-[#fb4934]">CRITICAL</span></td>
+                <td class="py-2.5 px-2.5">Secrets</td>
+                <td class="py-2.5 px-2.5 text-[#ebdbb2]">Exposed Private RSA/OpenSSH Key Block (BEGIN RSA PRIVATE KEY)</td>
+                <td class="py-2.5 px-2.5">Re-generate keypair and revoke authorized_keys entries.</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 px-2.5 font-bold text-[#fabd2f]">NW-CODE-001</td>
+                <td class="py-2.5 px-2.5"><span class="pill bg-[#1d2021] text-[#fe8019] border-[#fe8019]">HIGH</span></td>
+                <td class="py-2.5 px-2.5">Code Execution</td>
+                <td class="py-2.5 px-2.5 text-[#ebdbb2]">Dynamic Python Code Execution via eval() or exec()</td>
+                <td class="py-2.5 px-2.5">Replace dynamic evaluation with static AST parsing (ast.literal_eval).</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 px-2.5 font-bold text-[#fabd2f]">NW-CODE-002</td>
+                <td class="py-2.5 px-2.5"><span class="pill bg-[#1d2021] text-[#fe8019] border-[#fe8019]">HIGH</span></td>
+                <td class="py-2.5 px-2.5">Code Execution</td>
+                <td class="py-2.5 px-2.5 text-[#ebdbb2]">Arbitrary Shell Command Invocation via os.system()</td>
+                <td class="py-2.5 px-2.5">Use subprocess.run with explicit argument vectors (shell=False).</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 px-2.5 font-bold text-[#fabd2f]">NW-CODE-003</td>
+                <td class="py-2.5 px-2.5"><span class="pill bg-[#1d2021] text-[#fe8019] border-[#fe8019]">HIGH</span></td>
+                <td class="py-2.5 px-2.5">Code Execution</td>
+                <td class="py-2.5 px-2.5 text-[#ebdbb2]">Subprocess Shell Metacharacter Injection (shell=True)</td>
+                <td class="py-2.5 px-2.5">Disable shell expansion; pass arguments as structured arrays.</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 px-2.5 font-bold text-[#fabd2f]">NW-CODE-004</td>
+                <td class="py-2.5 px-2.5"><span class="pill bg-[#1d2021] text-[#fb4934] border-[#fb4934]">CRITICAL</span></td>
+                <td class="py-2.5 px-2.5">Deserialization</td>
+                <td class="py-2.5 px-2.5 text-[#ebdbb2]">Insecure Object Deserialization via pickle.loads()</td>
+                <td class="py-2.5 px-2.5">Migrate to safe serialization formats like JSON, Safetensors, or Protocol Buffers.</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 px-2.5 font-bold text-[#fabd2f]">NW-SYS-001</td>
+                <td class="py-2.5 px-2.5"><span class="pill bg-[#1d2021] text-[#fb4934] border-[#fb4934]">CRITICAL</span></td>
+                <td class="py-2.5 px-2.5">System</td>
+                <td class="py-2.5 px-2.5 text-[#ebdbb2]">Interactive Bash Reverse Shell (/dev/tcp/[host]/[port])</td>
+                <td class="py-2.5 px-2.5">Isolate network perimeter and terminate process namespace.</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 px-2.5 font-bold text-[#fabd2f]">NW-SYS-002</td>
+                <td class="py-2.5 px-2.5"><span class="pill bg-[#1d2021] text-[#fb4934] border-[#fb4934]">CRITICAL</span></td>
+                <td class="py-2.5 px-2.5">System</td>
+                <td class="py-2.5 px-2.5 text-[#ebdbb2]">Destructive Filesystem Deletion Invocation (rm -rf /)</td>
+                <td class="py-2.5 px-2.5">Enforce read-only containers and strict tool invocation gating.</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 px-2.5 font-bold text-[#fabd2f]">NW-SYS-003</td>
+                <td class="py-2.5 px-2.5"><span class="pill bg-[#1d2021] text-[#fe8019] border-[#fe8019]">HIGH</span></td>
+                <td class="py-2.5 px-2.5">System</td>
+                <td class="py-2.5 px-2.5 text-[#ebdbb2]">Sensitive Credential File Reconnaissance (cat /etc/shadow)</td>
+                <td class="py-2.5 px-2.5">Drop administrative Linux capabilities (CAP_DAC_OVERRIDE).</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 px-2.5 font-bold text-[#fabd2f]">NW-INJ-001</td>
+                <td class="py-2.5 px-2.5"><span class="pill bg-[#1d2021] text-[#fe8019] border-[#fe8019]">HIGH</span></td>
+                <td class="py-2.5 px-2.5">Injection</td>
+                <td class="py-2.5 px-2.5 text-[#ebdbb2]">Raw SQL Query Construction via String Interpolation</td>
+                <td class="py-2.5 px-2.5">Use parameterized prepared queries or safe typed ORM mappers.</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 px-2.5 font-bold text-[#fabd2f]">NW-MCP-001</td>
+                <td class="py-2.5 px-2.5"><span class="pill bg-[#1d2021] text-[#fb4934] border-[#fb4934]">CRITICAL</span></td>
+                <td class="py-2.5 px-2.5">MCP Protocol</td>
+                <td class="py-2.5 px-2.5 text-[#ebdbb2]">Hostile Command Execution in MCP Tool Arguments</td>
+                <td class="py-2.5 px-2.5">Intercept tool execution at stdio boundary via Nether Ward MCP proxy.</td>
+              </tr>
+              <tr>
+                <td class="py-2.5 px-2.5 font-bold text-[#fabd2f]">NW-MCP-002</td>
+                <td class="py-2.5 px-2.5"><span class="pill bg-[#1d2021] text-[#fb4934] border-[#fb4934]">CRITICAL</span></td>
+                <td class="py-2.5 px-2.5">MCP Protocol</td>
+                <td class="py-2.5 px-2.5 text-[#ebdbb2]">Sensitive Host Resource Traversal (file:///etc/shadow)</td>
+                <td class="py-2.5 px-2.5">Confine MCP resource URIs strictly within project workspace root.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- In-Flight Secret Redactor -->
+      <div class="gruvbox-card rounded-lg p-5">
+        <h2 class="text-base font-bold font-mono text-[#8ec07c] mb-2">In-Flight Secret Sanitization &amp; Masking</h2>
+        <p class="text-xs text-[#a89984] leading-relaxed mb-3">
+          When <code class="text-[#fabd2f]">--sanitize</code> is active in proxy or gateway mode, Nether Ward intercepts outgoing tool returns and incoming prompts, redacting API credentials in-flight to prevent model context contamination:
+        </p>
+        <div class="p-4 rounded bg-[#1d2021] border border-[#3c3836] text-xs font-mono space-y-1">
+          <div class="text-[#928374]">// Incoming tool result before model context ingestion:</div>
+          <div class="text-[#fb4934]">- AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE</div>
+          <div class="text-[#928374]">// Sanitized stream delivered into model context:</div>
+          <div class="text-[#b8bb26] font-bold">+ AWS_ACCESS_KEY_ID=AKIA***REDACTED***MPLE</div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ================================================================= -->
+    <!-- TAB 4: MCP PROXY & GATEWAY                                        -->
+    <!-- ================================================================= -->
+    <section id="pane-proxy" class="tab-pane hidden space-y-6">
+
+      <!-- MCP Stdio Proxy -->
+      <div class="gruvbox-card rounded-lg p-5">
+        <div class="flex items-center justify-between border-b border-[#3c3836] pb-3 mb-4">
+          <div>
+            <h2 class="text-base font-bold font-mono text-[#fabd2f]">Active Stdio MCP Security Proxy</h2>
+            <p class="text-xs text-[#a89984] mt-0.5">Bidirectional stdio JSON-RPC interception between AI agents and local MCP tool servers.</p>
+          </div>
+          <span class="pill bg-[#1d2021] text-[#8ec07c] border-[#3c3836]">RFC-Compliant</span>
+        </div>
+
+        <p class="text-xs text-[#a89984] leading-relaxed mb-4">
+          Agents communicate with Model Context Protocol (MCP) servers over standard I/O streams (<code class="text-[#fabd2f]">stdin</code> / <code class="text-[#8ec07c]">stdout</code>). Nether Ward wraps target MCP commands transparently, inspecting each JSON-RPC frame in real-time. Hostile tool calls are blocked at the perimeter without crashing the parent session.
+        </p>
+
+        <!-- Stdio Architecture ASCII Diagram -->
+        <div class="p-4 rounded bg-[#1d2021] border border-[#3c3836] text-xs font-mono text-[#ebdbb2] overflow-x-auto mb-4">
+<pre>
+[ Coding Agent / AI Runtime ]
+            | (stdin: JSON-RPC 2.0 tools/call)
+            v
++------------------------------------------------------------+
+|             NETHER WARD STDIO SECURITY PROXY               |
+|  * SAST Rule Engine (NW-SYS-001, NW-SYS-002, NW-CODE)      |
+|  * Heuristic Reverse Shell & Destructive Command Firewall  |
++------------------------------------------------------------+
+       |                                          |
+ [Hostile Detected]                        [Clean Tool Call]
+       |                                          |
+       v                                          v
+ Synthesize JSON-RPC 2.0                   Forward to child process
+ Error (code: -32000)                      Target MCP Server
+ Return on stdout directly                 (e.g. git, fs, terminal)
+</pre>
+        </div>
+
+        <div class="p-4 rounded bg-[#1d2021] border border-[#3c3836] text-xs font-mono space-y-2">
+          <div class="text-[#fabd2f] font-semibold">Configuring Nether Ward in .agents/mcp_config.json:</div>
+          <pre class="text-[#83a598] overflow-x-auto"><code>{
+  "mcpServers": {
+    "git": {
+      "command": "nether-ward",
+      "args": ["mcp", "--proxy", "--sanitize", "--", "mcp-server-git"]
+    },
+    "filesystem": {
+      "command": "nether-ward",
+      "args": ["mcp", "--proxy", "--sanitize", "--", "mcp-server-filesystem", "/home/damathryxx64/repositories"]
+    }
+  }
+}</code></pre>
+        </div>
+      </div>
+
+      <!-- OpenAI-Compatible Gateway Reverse Proxy -->
+      <div class="gruvbox-card rounded-lg p-5">
+        <h2 class="text-base font-bold font-mono text-[#8ec07c] mb-2">OpenAI-Compatible Runtime Firewall Gateway</h2>
+        <p class="text-xs text-[#a89984] leading-relaxed mb-4">
+          Exposes a high-performance HTTP reverse proxy implementing the OpenAI chat completion API. Filters incoming prompts for prompt injections, monitors model completions for secret leaks, and supports real-time Server-Sent Events (SSE) streaming.
+        </p>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs font-mono mb-4">
+          <div class="p-3.5 rounded bg-[#1d2021] border border-[#3c3836]">
+            <div class="text-[#fabd2f] font-bold">POST /v1/chat/completions</div>
+            <p class="text-[#a89984] mt-1">Perimeter firewall checks user prompt and tool arguments. Blocks hostile requests with HTTP 403 <code class="text-[#fb4934]">nether_ward_threat_blocked</code>.</p>
+          </div>
+          <div class="p-3.5 rounded bg-[#1d2021] border border-[#3c3836]">
+            <div class="text-[#8ec07c] font-bold">GET /metrics &amp; GET /v1/stats</div>
+            <p class="text-[#a89984] mt-1">Exposes Prometheus-compatible counters and operational JSON stats (total, blocked, sanitized, and completed requests).</p>
+          </div>
+        </div>
+
+        <div class="p-3 rounded bg-[#1d2021] border border-[#3c3836] text-xs font-mono">
+          <span class="text-[#928374]"># Launch gateway on port 4000 targeting Gemini or local Ollama:</span><br>
+          <span class="text-[#ebdbb2]">$ nether-ward gateway --port 4000 --model gemini-2.5-flash --sanitize</span>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ================================================================= -->
+    <!-- TAB 5: ADVERSARIAL RED TEAM EVALUATION                            -->
+    <!-- ================================================================= -->
+    <section id="pane-redteam" class="tab-pane hidden space-y-6">
+
+      <div class="gruvbox-card rounded-lg p-5">
+        <h2 class="text-base font-bold font-mono text-[#fabd2f] mb-2">Autonomous Adversarial Red Team Harness</h2>
+        <p class="text-xs text-[#a89984] leading-relaxed mb-4">
+          Automated evaluation framework testing AI models against the OWASP Top 10 for Large Language Models. Supports synthetic datasets, multi-turn agent trajectories, multi-assertion verification, and probabilistic semantic judging via Jev (TypeSafe AI).
+        </p>
+
+        <!-- Assertion Types Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs font-mono mb-4">
+          <div class="p-3 rounded bg-[#1d2021] border border-[#3c3836]">
+            <div class="text-[#b8bb26] font-bold">contains / not-contains</div>
+            <p class="text-[#a89984] mt-1">Exact substring and case-insensitive matching asserting absence of bypass tokens.</p>
+          </div>
+          <div class="p-3 rounded bg-[#1d2021] border border-[#3c3836]">
+            <div class="text-[#fabd2f] font-bold">regex / not-regex</div>
+            <p class="text-[#a89984] mt-1">POSIX regular expression pattern matching for complex refusal signatures.</p>
+          </div>
+          <div class="p-3 rounded bg-[#1d2021] border border-[#3c3836]">
+            <div class="text-[#8ec07c] font-bold">sast-clean</div>
+            <p class="text-[#a89984] mt-1">Runs Nether Ward SAST engine over model-generated code to verify zero Critical/High flaws.</p>
+          </div>
+          <div class="p-3 rounded bg-[#1d2021] border border-[#3c3836]">
+            <div class="text-[#83a598] font-bold">tool-not-called</div>
+            <p class="text-[#a89984] mt-1">Asserts that the model did not invoke unauthorized agent tools (e.g. execute_bash).</p>
+          </div>
+          <div class="p-3 rounded bg-[#1d2021] border border-[#3c3836]">
+            <div class="text-[#d3869b] font-bold">jev-safety</div>
+            <p class="text-[#a89984] mt-1">Calls Jev System One model to evaluate probabilistic semantic safety compliance.</p>
+          </div>
+          <div class="p-3 rounded bg-[#1d2021] border border-[#3c3836]">
+            <div class="text-[#fb4934] font-bold">threshold-gate</div>
+            <p class="text-[#a89984] mt-1">Exits with status code 100 if the overall pass rate falls below configured threshold.</p>
+          </div>
+        </div>
+
+        <div class="p-4 rounded bg-[#1d2021] border border-[#3c3836] text-xs font-mono space-y-2">
+          <div class="text-[#fabd2f] font-semibold">Running Red Team Evaluation via CLI:</div>
+          <div class="text-[#ebdbb2]">$ nether-ward redteam --config config/redteam_config.yaml --dataset datasets/owasp_top10_expanded.jsonl --concurrency 8</div>
+          <div class="text-[#83a598] pt-1">Reports generated: reports/redteam_report.html, reports/redteam.junit.xml, reports/redteam_report.json</div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ================================================================= -->
+    <!-- TAB 6: CI/CD PIPELINE & NIX PACKAGING                             -->
+    <!-- ================================================================= -->
+    <section id="pane-cicd" class="tab-pane hidden space-y-6">
+
+      <!-- 6-Stage CI/CD Pipeline -->
+      <div class="gruvbox-card rounded-lg p-5">
+        <h2 class="text-base font-bold font-mono text-[#fabd2f] mb-3">6-Stage Continuous Integration &amp; Security Pipeline</h2>
+        <p class="text-xs text-[#a89984] leading-relaxed mb-4">
+          Nether Ward operates under an automated 6-stage CI/CD security pipeline running on every commit across GitHub Actions and GitLab CI:
+        </p>
+
+        <div class="space-y-3 text-xs font-mono">
+          <div class="p-3 rounded bg-[#1d2021] border border-[#3c3836] flex items-center justify-between">
+            <div>
+              <span class="text-[#fabd2f] font-bold">[Stage 1] Validate:</span>
+              <span class="text-[#a89984] ml-2">JSON schema validation (values.json), cargo fmt --check, cargo clippy --all-targets -- -D warnings</span>
+            </div>
+            <span class="pill bg-[#282828] text-[#b8bb26] border-[#3c3836]">Zero Warnings</span>
+          </div>
+
+          <div class="p-3 rounded bg-[#1d2021] border border-[#3c3836] flex items-center justify-between">
+            <div>
+              <span class="text-[#8ec07c] font-bold">[Stage 2] Secret Scan:</span>
+              <span class="text-[#a89984] ml-2">Static regex scanning across all git-tracked files for leaked credentials and unmasked API keys</span>
+            </div>
+            <span class="pill bg-[#282828] text-[#8ec07c] border-[#3c3836]">Clean</span>
+          </div>
+
+          <div class="p-3 rounded bg-[#1d2021] border border-[#3c3836] flex items-center justify-between">
+            <div>
+              <span class="text-[#83a598] font-bold">[Stage 3] Test &amp; SARIF:</span>
+              <span class="text-[#a89984] ml-2">41 Unit Tests (lib.rs) + 22 Integration Tests (tests/) + Multi-Vector SAST scan + SARIF v2.1.0 upload</span>
+            </div>
+            <span class="pill bg-[#282828] text-[#83a598] border-[#3c3836]">63/63 Passed</span>
+          </div>
+
+          <div class="p-3 rounded bg-[#1d2021] border border-[#3c3836] flex items-center justify-between">
+            <div>
+              <span class="text-[#d3869b] font-bold">[Stage 4] Dependency Audit:</span>
+              <span class="text-[#a89984] ml-2">RustSec automated security advisory database vulnerability scan against Cargo.lock</span>
+            </div>
+            <span class="pill bg-[#282828] text-[#d3869b] border-[#3c3836]">Audited</span>
+          </div>
+
+          <div class="p-3 rounded bg-[#1d2021] border border-[#3c3836] flex items-center justify-between">
+            <div>
+              <span class="text-[#fe8019] font-bold">[Stage 5] Red Team &amp; SBOM:</span>
+              <span class="text-[#a89984] ml-2">OWASP Top 10 synthetic evaluation, trajectory testing, JUnit check publishing, and SPDX SBOM generation</span>
+            </div>
+            <span class="pill bg-[#282828] text-[#fe8019] border-[#3c3836]">SPDX v2.3</span>
+          </div>
+
+          <div class="p-3 rounded bg-[#1d2021] border border-[#3c3836] flex items-center justify-between">
+            <div>
+              <span class="text-[#b8bb26] font-bold">[Stage 6] Pages Deploy:</span>
+              <span class="text-[#a89984] ml-2">Automated publication of technical documentation portal, HTML dashboards, SARIF scans, and JUnit reports</span>
+            </div>
+            <span class="pill bg-[#282828] text-[#b8bb26] border-[#3c3836]">Live</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Declarative Nix Packaging -->
+      <div class="gruvbox-card rounded-lg p-5">
+        <h2 class="text-base font-bold font-mono text-[#8ec07c] mb-2">Declarative Hermetic Nix Packaging</h2>
+        <p class="text-xs text-[#a89984] leading-relaxed mb-3">
+          Nether Ward is packaged natively via <code class="text-[#fabd2f]">flake.nix</code> using <code class="text-[#8ec07c]">pkgs.rustPlatform.buildRustPackage</code>. Builds are hermetic, reproducible, and compile the entire package inside an isolated sandbox with zero network access.
+        </p>
+
+        <div class="p-4 rounded bg-[#1d2021] border border-[#3c3836] text-xs font-mono space-y-2">
+          <div class="text-[#928374]"># Build hermetic derivation locally:</div>
+          <div class="text-[#ebdbb2]">$ nix build .#nether-ward --no-link</div>
+          <div class="text-[#928374] pt-2"># Run isolated development shell with complete Rust compiler and tools:</div>
+          <div class="text-[#ebdbb2]">$ nix develop</div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ================================================================= -->
+    <!-- TAB 7: CLI MANUAL & API SPECIFICATIONS                            -->
+    <!-- ================================================================= -->
+    <section id="pane-cli" class="tab-pane hidden space-y-6">
+
+      <div class="gruvbox-card rounded-lg p-5">
+        <h2 class="text-base font-bold font-mono text-[#fabd2f] mb-3">Nether Ward CLI Command Reference</h2>
+        
+        <div class="space-y-4 text-xs font-mono">
+          <!-- Command 1: threat -->
+          <div class="p-4 rounded bg-[#1d2021] border border-[#3c3836]">
+            <div class="flex items-center justify-between border-b border-[#3c3836] pb-2 mb-2">
+              <span class="font-bold text-[#fabd2f]">nether-ward threat [OPTIONS]</span>
+              <span class="pill bg-[#282828] text-[#fabd2f] border-[#3c3836]">Threat &amp; SAST Engine</span>
+            </div>
+            <p class="text-[#a89984] mb-2">Analyzes files or directories for Shannon entropy variance, localized stagers, and multi-vector SAST flaws.</p>
+            <div class="text-[#83a598] space-y-1">
+              <div>--sample &lt;PATH&gt;  : Target single file for entropy and heuristic analysis</div>
+              <div>--dir &lt;PATH&gt;     : Batch triage all files within a directory</div>
+              <div>--sast &lt;PATH&gt;    : Run Deep Static Application Security Testing on directory</div>
+              <div>--sarif &lt;PATH&gt;   : Export static analysis findings to OASIS SARIF v2.1.0 format</div>
+              <div>--rules          : Display all 20 active threat detection rules</div>
+              <div>--json           : Emit structured machine-readable JSON output</div>
+            </div>
+          </div>
+
+          <!-- Command 2: gateway -->
+          <div class="p-4 rounded bg-[#1d2021] border border-[#3c3836]">
+            <div class="flex items-center justify-between border-b border-[#3c3836] pb-2 mb-2">
+              <span class="font-bold text-[#8ec07c]">nether-ward gateway [OPTIONS]</span>
+              <span class="pill bg-[#282828] text-[#8ec07c] border-[#3c3836]">Perimeter Gateway</span>
+            </div>
+            <p class="text-[#a89984] mb-2">Launches an OpenAI-compatible reverse proxy with prompt injection firewall and secret redaction.</p>
+            <div class="text-[#83a598] space-y-1">
+              <div>--port &lt;PORT&gt;    : TCP port to listen on (default: 4000)</div>
+              <div>--model &lt;NAME&gt;   : Default upstream model (default: gemini-flash-lite-latest)</div>
+              <div>--upstream &lt;URL&gt; : Upstream OpenAI-compatible API base URL</div>
+              <div>--sanitize       : Enable in-flight secret sanitization and credential masking</div>
+            </div>
+          </div>
+
+          <!-- Command 3: mcp -->
+          <div class="p-4 rounded bg-[#1d2021] border border-[#3c3836]">
+            <div class="flex items-center justify-between border-b border-[#3c3836] pb-2 mb-2">
+              <span class="font-bold text-[#83a598]">nether-ward mcp [OPTIONS]</span>
+              <span class="pill bg-[#282828] text-[#83a598] border-[#3c3836]">MCP Stdio Proxy</span>
+            </div>
+            <p class="text-[#a89984] mb-2">Audits declarative configuration files or runs bidirectional stdio proxy intercepting tool calls.</p>
+            <div class="text-[#83a598] space-y-1">
+              <div>--config &lt;PATH&gt;   : Audit MCP configuration file for security vulnerabilities</div>
+              <div>--proxy           : Run active stdio proxy wrapping a child tool process</div>
+              <div>--sanitize        : Enable in-flight secret masking on tool stdout</div>
+              <div>-- &lt;COMMAND...&gt;  : Child MCP server command and arguments to wrap</div>
+            </div>
+          </div>
+
+          <!-- Command 4: redteam -->
+          <div class="p-4 rounded bg-[#1d2021] border border-[#3c3836]">
+            <div class="flex items-center justify-between border-b border-[#3c3836] pb-2 mb-2">
+              <span class="font-bold text-[#fe8019]">nether-ward redteam [OPTIONS]</span>
+              <span class="pill bg-[#282828] text-[#fe8019] border-[#3c3836]">Adversarial Harness</span>
+            </div>
+            <p class="text-[#a89984] mb-2">Executes automated adversarial benchmarks against model endpoints and generates compliance reports.</p>
+            <div class="text-[#83a598] space-y-1">
+              <div>--config &lt;PATH&gt;     : Path to redteam evaluation YAML configuration</div>
+              <div>--dataset &lt;PATH&gt;    : Path to synthetic probe dataset in JSONL format</div>
+              <div>--concurrency &lt;N&gt;   : Maximum parallel model evaluation queries (default: 4)</div>
+              <div>--threshold &lt;PCT&gt;   : Minimum required test pass percentage threshold</div>
+              <div>--judge &lt;MODE&gt;      : Semantic judge mode ('jev' or 'lexical')</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Exit Codes Table -->
+      <div class="gruvbox-card rounded-lg p-5">
+        <h2 class="text-base font-bold font-mono text-[#d3869b] mb-3">Standard Process Exit Codes</h2>
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs font-mono text-left border-collapse">
+            <thead>
+              <tr class="border-b border-[#3c3836] text-[#928374]">
+                <th class="py-2 px-3">Exit Code</th>
+                <th class="py-2 px-3">Status Name</th>
+                <th class="py-2 px-3">Trigger Condition</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-[#3c3836]/60 text-[#a89984]">
+              <tr>
+                <td class="py-2 px-3 font-bold text-[#b8bb26]">0</td>
+                <td class="py-2 px-3 text-[#ebdbb2]">SUCCESS_CLEAN</td>
+                <td class="py-2 px-3">Execution clean; zero high/critical vulnerabilities or threat indicators detected.</td>
+              </tr>
+              <tr>
+                <td class="py-2 px-3 font-bold text-[#fabd2f]">1</td>
+                <td class="py-2 px-3 text-[#ebdbb2]">RUNTIME_ERROR</td>
+                <td class="py-2 px-3">Invalid CLI arguments, missing configuration file, or I/O failure.</td>
+              </tr>
+              <tr>
+                <td class="py-2 px-3 font-bold text-[#fb4934]">2</td>
+                <td class="py-2 px-3 text-[#ebdbb2]">THREAT_DETECTED</td>
+                <td class="py-2 px-3">SAST scan or entropy analysis flagged High or Critical security findings.</td>
+              </tr>
+              <tr>
+                <td class="py-2 px-3 font-bold text-[#fe8019]">100</td>
+                <td class="py-2 px-3 text-[#ebdbb2]">BENCHMARK_FAILURE</td>
+                <td class="py-2 px-3">Adversarial red team benchmark pass rate fell below the configured threshold.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="bg-[#282828] border-t border-[#3c3836] py-3 text-xs font-mono text-[#928374] mt-auto">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between">
+      <div>Nether Ward · Pure Compiled Rust AI Security Sentinel &amp; Adversarial Verification Platform</div>
+      <a href="#overview" onclick="switchTab('overview')" class="text-[#fabd2f] hover:underline">Top ↑</a>
+    </div>
+  </footer>
+
+  <!-- Interactive JavaScript Engine -->
+  <script>
+    const TABS = ['overview', 'threat', 'sast', 'proxy', 'redteam', 'cicd', 'cli'];
+
+    function switchTab(tabId) {
+      if (!TABS.includes(tabId)) tabId = 'overview';
+      
+      TABS.forEach(t => {
+        const pane = document.getElementById('pane-' + t);
+        const btn = document.getElementById('tab-btn-' + t);
+        if (pane) pane.classList.toggle('hidden', t !== tabId);
+        if (btn) btn.classList.toggle('active', t === tabId);
+      });
+
+      history.replaceState(null, null, '#' + tabId);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    // Keyboard Shortcuts (1-7 to switch tabs, '/' to search)
+    window.addEventListener('keydown', (e) => {
+      if (document.activeElement.tagName === 'INPUT') return;
+      const num = parseInt(e.key);
+      if (num >= 1 && num <= 7) {
+        switchTab(TABS[num - 1]);
+      } else if (e.key === '/') {
+        e.preventDefault();
+        document.getElementById('globalSearch').focus();
+      }
+    });
+
+    // Filter functionality
+    function handleFilter() {
+      const q = document.getElementById('globalSearch').value.toLowerCase().trim();
+      const clearBtn = document.getElementById('clearSearchBtn');
+      clearBtn.classList.toggle('hidden', q.length === 0);
+
+      const activePane = document.querySelector('.tab-pane:not(.hidden)');
+      if (!activePane) return;
+
+      const cards = activePane.querySelectorAll('.gruvbox-card, .p-3, .p-3.5, .p-4, tr');
+      cards.forEach(c => {
+        const text = c.textContent.toLowerCase();
+        c.style.display = (q === '' || text.includes(q)) ? '' : 'none';
+      });
+    }
+
+    function clearSearch() {
+      document.getElementById('globalSearch').value = '';
+      handleFilter();
+    }
+
+    // Load initial tab from hash
+    window.addEventListener('DOMContentLoaded', () => {
+      const hash = window.location.hash.replace('#', '');
+      if (hash && TABS.includes(hash)) {
+        switchTab(hash);
+      }
+    });
+  </script>
+</body>
+</html>

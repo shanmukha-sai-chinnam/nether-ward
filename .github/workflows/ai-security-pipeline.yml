@@ -201,8 +201,13 @@ jobs:
         if: always()
         run: |
           mkdir -p public
-          if [ -f reports/redteam_report.html ]; then
+          if [ -f docs/index.html ]; then
+            cp docs/index.html public/index.html
+          elif [ -f reports/redteam_report.html ]; then
             cp reports/redteam_report.html public/index.html
+          fi
+          if [ -f reports/redteam_report.html ]; then
+            cp reports/redteam_report.html public/redteam_report.html
           fi
           if [ -f reports/redteam.junit.xml ]; then
             cp reports/redteam.junit.xml public/redteam.junit.xml

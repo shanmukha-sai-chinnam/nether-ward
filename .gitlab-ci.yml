@@ -1,0 +1,70 @@
+# GitLab CI/CD Pipeline for Nether Ward
+# Automated testing, static analysis, and GitLab Pages deployment
+
+stages:
+  - validate
+  - test
+  - deploy
+
+default:
+  image: rust:1.80-bullseye
+
+variables:
+  CARGO_HOME: $CI_PROJECT_DIR/.cargo
+  RUST_BACKTRACE: "1"
+
+cache:
+  key: "$CI_JOB_NAME"
+  paths:
+    - .cargo/bin
+    - .cargo/registry/index
+    - .cargo/registry/cache
+    - target/debug/deps
+    - target/debug/build
+
+validate:
+  stage: validate
+  before_script:
+    - rustup component add rustfmt clippy
+    - apt-get update && apt-get install -y jq pkg-config libssl-dev
+  script:
+    - echo "==> Validating values.json declarative configuration..."
+    - jq empty values.json
+    - echo "==> Checking Rust formatting..."
+    - cargo fmt --all -- --check
+    - echo "==> Running Clippy linter..."
+    - cargo clippy --all-targets -- -D warnings
+
+test:
+  stage: test
+  before_script:
+    - apt-get update && apt-get install -y pkg-config libssl-dev
+  script:
+    - echo "==> Running Unit and Integration Test Suites..."
+    - cargo test --verbose
+    - echo "==> Running Batch Threat Triage on sample dataset..."
+    - cargo run -- threat --dir datasets/threat_samples || true
+    - echo "==> Running SAST scan and exporting SARIF..."
+    - mkdir -p reports
+    - cargo run -- threat --sast datasets/threat_samples --sarif reports/sast.sarif || true
+    - cargo run -- threat --rules
+  artifacts:
+    when: always
+    paths:
+      - reports/
+    expire_in: 30 days
+
+pages:
+  stage: deploy
+  script:
+    - mkdir -p public
+    - if [ -f docs/index.html ]; then cp docs/index.html public/index.html; fi
+    - if [ -d reports ]; then cp -r reports/* public/ || true; fi
+    - if [ -f values.json ]; then cp values.json public/values.json; fi
+    - echo "GitLab Pages static payload prepared:"
+    - ls -lh public/
+  artifacts:
+    paths:
+      - public
+  rules:
+    - if: $CI_COMMIT_BRANCH == "trunk" || $CI_COMMIT_BRANCH == "main"
