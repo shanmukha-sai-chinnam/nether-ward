@@ -1,5 +1,5 @@
 {
-  description = "AI Infrastructure Engineering Platform & Agentic Toolkit";
+  description = "Nether Ward: Declarative AI Infrastructure & Autonomous Cybersecurity Sentinel";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -23,7 +23,7 @@
         pythonEnv = pkgs.python312;
       in {
         devShells.default = pkgs.mkShell {
-          name = "ai-infra-shell";
+          name = "nether-ward-shell";
 
           buildInputs = with pkgs; [
             # AI & Local Inference Runtimes
@@ -52,10 +52,11 @@
           ];
 
           shellHook = ''
+            export NETHER_WARD_SHELL=1
             export AI_INFRA_SHELL=1
             export UV_PYTHON_PREFERENCE="only-system"
             export UV_PYTHON="${pythonEnv}/bin/python3"
-            export AI_INFRA_ROOT="$(pwd)"
+            export NETHER_WARD_ROOT="$(pwd)"
 
             # Ensure local virtual environment is active if initialized
             if [ -d ".venv" ]; then
@@ -63,7 +64,7 @@
             fi
 
             echo -e "\033[1;33m--------------------------------------------------------\033[0m"
-            echo -e "\033[1;32m AI Infrastructure Toolkit — Active Environment\033[0m"
+            echo -e "\033[1;32m Nether Ward — Autonomous AI Security & Infrastructure\033[0m"
             echo -e "\033[1;33m--------------------------------------------------------\033[0m"
             echo -e "  \033[1;34mPython:\033[0m       $(${pythonEnv}/bin/python3 --version 2>&1)"
             echo -e "  \033[1;34mUV:\033[0m           $(${pkgs.uv}/bin/uv --version 2>&1)"

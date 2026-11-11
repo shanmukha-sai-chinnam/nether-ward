@@ -1,6 +1,8 @@
-# Declarative AI Infrastructure & Cybersecurity Platform
+# Nether Ward
 
-Reproducible devShells, unified AI Gateway routing, local quantized inference runners, automated prompt evaluation, autonomous threat triage, and synthetic red teaming in CI/CD.
+**Declarative AI Infrastructure Platform & Autonomous Cybersecurity Sentinel**
+
+Named after Pugna's **Nether Ward** — the automated sentinel that silently surveils the battlefield and instantly strikes hostile spellcasters the moment an exploit is cast. Nether Ward provides reproducible devShells, unified AI Gateway routing, local quantized inference runners, automated prompt evaluation, autonomous threat triage, and synthetic adversarial red teaming in GitHub CI/CD.
 
 ---
 
@@ -11,7 +13,7 @@ Reproducible devShells, unified AI Gateway routing, local quantized inference ru
 nix develop
 
 # Or with direnv active:
-cd repositories/ai-infra
+cd repositories/nether-ward
 
 # Run the LiteLLM AI Gateway
 ./bin/gateway
@@ -37,7 +39,7 @@ cd repositories/ai-infra
 | **AI Gateway** | `config/litellm_config.yaml` | LiteLLM reverse proxy providing fallbacks, load balancing, and unified OpenAI-compatible routing. |
 | **Threat Triage Engine** | `src/threat_analyzer.py` | Static Shannon entropy calculation, string extraction, and Gemini AI forensic de-obfuscation. |
 | **Synthetic Red Teaming** | `config/redteam_config.yaml` | Promptfoo test suite benchmarking agents against the OWASP Top 10 for Large Language Models. |
-| **Target Agent Prompts** | `prompts/` | Side-by-side targets: `vulnerable_agent.txt` (unhardened debug bot) vs `hardened_agent.txt` (defensive guardrail agent). |
+| **Target Agent Prompts** | `prompts/` | Comparative targets: `vulnerable_agent.txt` (unhardened debug bot) vs `hardened_agent.txt` (defensive guardrail agent). |
 | **GitHub Actions CI/CD** | `.github/workflows/ai-security-pipeline.yml` | Multi-stage pipeline running integrity checks, static secret scanning, unit tests, and red team evaluations. |
 
 ---

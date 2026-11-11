@@ -1,7 +1,7 @@
 {
-  "name": "ai-infra",
+  "name": "nether-ward",
   "version": "1.0.0",
-  "description": "Declarative AI Infrastructure Platform & Agentic Toolkit",
+  "description": "Nether Ward: Declarative AI Infrastructure Platform & Autonomous Cybersecurity Sentinel",
   "type": "module",
   "scripts": {
     "eval": "./bin/eval",

@@ -1,19 +1,18 @@
 {
+  "name": "nether-ward",
+  "version": "1.0.0",
+  "description": "Nether Ward: Declarative AI Infrastructure Platform & Autonomous Cybersecurity Sentinel",
   "gateway": {
     "host": "127.0.0.1",
-    "port": 4000,
-    "master_key": "sk-ai-infra-local",
-    "database": "data/gateway.db"
+    "port": 4000
   },
-  "local_inference": {
+  "inference": {
+    "engine": "ollama",
     "host": "127.0.0.1",
     "port": 11434,
-    "models_dir": "models",
-    "default_model": "qwen2.5:7b",
-    "coder_model": "qwen2.5-coder:7b"
+    "default_model": "qwen2.5-coder:1.5b"
   },
   "evals": {
-    "provider": "litellm",
-    "default_runs": 3
+    "framework": "promptfoo"
   }
 }
