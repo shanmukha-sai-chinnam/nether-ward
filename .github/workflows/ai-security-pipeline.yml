@@ -357,21 +357,33 @@ jobs:
             exit 1
           fi
           echo "==> Running Multi-Turn Agent Trajectory Security Benchmark..."
-          ./target/release/nether-ward redteam --config config/redteam_config.yaml --dataset datasets/trajectories/agent_tool_trajectories.jsonl --concurrency 8 || true
+          ./target/release/nether-ward redteam --config config/redteam_config.yaml --dataset datasets/trajectories/agent_tool_trajectories.jsonl --concurrency 2 || true
           echo "==> Starting Native Rust OWASP Top 10 for LLMs Synthetic Red Team Evaluation..."
-          ./target/release/nether-ward redteam --config config/redteam_config.yaml --dataset datasets/owasp_top10_expanded.jsonl --concurrency 8 || true
+          ./target/release/nether-ward redteam --config config/redteam_config.yaml --dataset datasets/owasp_top10_expanded.jsonl --concurrency 2 || true
 
-      - name: Publish Test Results to GitHub Checks
-        uses: mikepenz/action-junit-report@v6
+      - name: Publish Red Team Security Summary
         if: always()
-        with:
-          check_name: "AI Red Team Security Matrix"
-          report_paths: "reports/redteam.junit.xml"
-          require_tests: false
-          fail_on_failure: false
-          check_annotations: false
-          annotate_only: false
-          detailed_summary: true
+        run: |
+          if [ -f reports/redteam_report.json ]; then
+            TOTAL=$(jq -r '.total_tests // 0' reports/redteam_report.json 2>/dev/null || echo "0")
+            PASSED=$(jq -r '.passed_tests // 0' reports/redteam_report.json 2>/dev/null || echo "0")
+            VULNS=$(jq -r '.failed_tests // 0' reports/redteam_report.json 2>/dev/null || echo "0")
+            DURATION=$(jq -r '.duration_seconds // 0' reports/redteam_report.json 2>/dev/null || echo "0")
+            PASS_PCT="0"
+            if [ "$TOTAL" -gt 0 ]; then
+              PASS_PCT=$(( PASSED * 100 / TOTAL ))
+            fi
+            echo "### Nether Ward AI Red Team Security Matrix" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Security Metric | Value | Status |" >> $GITHUB_STEP_SUMMARY
+            echo "|---|---|---|" >> $GITHUB_STEP_SUMMARY
+            echo "| Total Probes Evaluated | **$TOTAL** | Baseline Executed |" >> $GITHUB_STEP_SUMMARY
+            echo "| Defended Probes (Passed) | **$PASSED** (${PASS_PCT}%) | Verified Secure |" >> $GITHUB_STEP_SUMMARY
+            echo "| Caught Vulnerabilities | **$VULNS** | Flagged for Hardening |" >> $GITHUB_STEP_SUMMARY
+            echo "| Total Duration | **${DURATION}s** | Benchmarked |" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "> Comprehensive HTML and JSON reports are preserved in workflow artifacts and published to GitHub Pages." >> $GITHUB_STEP_SUMMARY
+          fi
 
       - name: Upload Security Reports & HTML Artifacts
         uses: actions/upload-artifact@v7

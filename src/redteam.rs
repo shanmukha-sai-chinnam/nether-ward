@@ -343,89 +343,115 @@ pub async fn run_redteam(
                 let _permit = sem.acquire().await.unwrap();
                 let probe_start = Instant::now();
 
-                let response = if is_local {
-                    let ep_url = local_ep.unwrap_or_else(|| "http://localhost:4000/v1/chat/completions".to_string());
-                    let messages = if let Some(ref traj) = test.vars.messages {
-                        let mut msgs = Vec::new();
-                        let has_system = traj.iter().any(|m| m.role == "system");
-                        if !has_system && !system_instruction.is_empty() {
-                            msgs.push(serde_json::json!({
-                                "role": "system",
-                                "content": system_instruction
-                            }));
-                        }
-                        for m in traj {
-                            msgs.push(serde_json::to_value(m).unwrap_or_default());
-                        }
-                        msgs
-                    } else {
-                        vec![
-                            serde_json::json!({ "role": "system", "content": system_instruction }),
-                            serde_json::json!({ "role": "user", "content": test.vars.prompt }),
-                        ]
-                    };
-
-                    let payload = serde_json::json!({
-                        "model": model_id,
-                        "messages": messages,
-                        "max_tokens": 256,
-                        "temperature": 0.0
-                    });
-                    client.post(&ep_url).json(&payload).send().await
-                } else {
-                    let url = format!(
-                        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-                        model_id, api_key
-                    );
-                    let (sys_instr, contents) = if let Some(ref traj) = test.vars.messages {
-                        let mut gemini_contents = Vec::new();
-                        let mut sys = if !system_instruction.is_empty() {
-                            Some(serde_json::json!({
-                                "parts": [{ "text": system_instruction }]
-                            }))
-                        } else {
-                            None
-                        };
-
-                        for m in traj {
-                            let text = m.content.clone().unwrap_or_default();
-                            if m.role == "system" {
-                                sys = Some(serde_json::json!({
-                                    "parts": [{ "text": text }]
-                                }));
-                            } else {
-                                let role = if m.role == "assistant" { "model" } else { "user" };
-                                gemini_contents.push(serde_json::json!({
-                                    "role": role,
-                                    "parts": [{ "text": text }]
+                let mut response = None;
+                for attempt in 0..4 {
+                    let res = if is_local {
+                        let ep_url = local_ep.as_deref().unwrap_or("http://localhost:4000/v1/chat/completions");
+                        let messages = if let Some(ref traj) = test.vars.messages {
+                            let mut msgs = Vec::new();
+                            let has_system = traj.iter().any(|m| m.role == "system");
+                            if !has_system && !system_instruction.is_empty() {
+                                msgs.push(serde_json::json!({
+                                    "role": "system",
+                                    "content": system_instruction
                                 }));
                             }
-                        }
-                        (sys, gemini_contents)
+                            for m in traj {
+                                msgs.push(serde_json::to_value(m).unwrap_or_default());
+                            }
+                            msgs
+                        } else {
+                            vec![
+                                serde_json::json!({ "role": "system", "content": system_instruction }),
+                                serde_json::json!({ "role": "user", "content": test.vars.prompt }),
+                            ]
+                        };
+
+                        let payload = serde_json::json!({
+                            "model": model_id,
+                            "messages": messages,
+                            "max_tokens": 256,
+                            "temperature": 0.0
+                        });
+                        client.post(ep_url).json(&payload).send().await
                     } else {
-                        (
-                            Some(serde_json::json!({
-                                "parts": [{ "text": system_instruction }]
-                            })),
-                            vec![serde_json::json!({
-                                "role": "user",
-                                "parts": [{ "text": test.vars.prompt }]
-                            })],
-                        )
+                        let url = format!(
+                            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+                            model_id, api_key
+                        );
+                        let (sys_instr, contents) = if let Some(ref traj) = test.vars.messages {
+                            let mut gemini_contents = Vec::new();
+                            let mut sys = if !system_instruction.is_empty() {
+                                Some(serde_json::json!({
+                                    "parts": [{ "text": system_instruction }]
+                                }))
+                            } else {
+                                None
+                            };
+
+                            for m in traj {
+                                let text = m.content.clone().unwrap_or_default();
+                                if m.role == "system" {
+                                    sys = Some(serde_json::json!({
+                                        "parts": [{ "text": text }]
+                                    }));
+                                } else {
+                                    let role = if m.role == "assistant" { "model" } else { "user" };
+                                    gemini_contents.push(serde_json::json!({
+                                        "role": role,
+                                        "parts": [{ "text": text }]
+                                    }));
+                                }
+                            }
+                            (sys, gemini_contents)
+                        } else {
+                            (
+                                Some(serde_json::json!({
+                                    "parts": [{ "text": system_instruction }]
+                                })),
+                                vec![serde_json::json!({
+                                    "role": "user",
+                                    "parts": [{ "text": test.vars.prompt }]
+                                })],
+                            )
+                        };
+
+                        let mut payload = serde_json::json!({
+                            "contents": contents,
+                            "generationConfig": {
+                                "maxOutputTokens": 256,
+                                "temperature": 0.0
+                            }
+                        });
+                        if let Some(s) = sys_instr {
+                            payload["system_instruction"] = s;
+                        }
+                        client.post(&url).json(&payload).send().await
                     };
 
-                    let mut payload = serde_json::json!({
-                        "contents": contents,
-                        "generationConfig": {
-                            "maxOutputTokens": 256,
-                            "temperature": 0.0
+                    match res {
+                        Ok(resp) => {
+                            if (resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS
+                                || resp.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE)
+                                && attempt < 3
+                            {
+                                tokio::time::sleep(tokio::time::Duration::from_millis(1500 * (attempt as u64 + 1))).await;
+                                continue;
+                            }
+                            response = Some(Ok(resp));
+                            break;
                         }
-                    });
-                    if let Some(s) = sys_instr {
-                        payload["system_instruction"] = s;
+                        Err(e) => {
+                            if attempt < 3 {
+                                tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+                                continue;
+                            }
+                            response = Some(Err(e));
+                            break;
+                        }
                     }
-                    client.post(&url).json(&payload).send().await
-                };
+                }
+                let response = response.expect("Exhausted retry loop without response");
 
                 let probe_duration = probe_start.elapsed().as_millis();
 
