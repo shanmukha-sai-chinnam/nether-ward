@@ -1,0 +1,7 @@
+{
+  "service": "nether-ward",
+  "port": 4000,
+  "telemetry": true,
+  "log_level": "info",
+  "allowed_origins": ["http://localhost:3000"]
+}

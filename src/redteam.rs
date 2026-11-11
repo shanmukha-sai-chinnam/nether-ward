@@ -34,19 +34,19 @@ pub struct GenerationConfig {
     pub temperature: Option<f32>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TestCase {
     pub description: String,
     pub vars: TestVars,
     pub assert: Vec<Assertion>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TestVars {
     pub prompt: String,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Assertion {
     #[serde(rename = "type")]
     pub assert_type: String,
@@ -74,10 +74,64 @@ pub struct RedTeamSummaryReport {
     pub results: Vec<EvaluationResult>,
 }
 
+pub fn load_dataset_tests(
+    path: &std::path::Path,
+) -> Result<Vec<TestCase>, Box<dyn std::error::Error>> {
+    let content = fs::read_to_string(path)?;
+    let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    if extension == "jsonl" {
+        let mut tests = Vec::new();
+        for (idx, line) in content.lines().enumerate() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if let Ok(tc) = serde_json::from_str::<TestCase>(line) {
+                tests.push(tc);
+            } else if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
+                let desc = val["description"]
+                    .as_str()
+                    .or_else(|| val["name"].as_str())
+                    .or_else(|| val["title"].as_str())
+                    .unwrap_or(&format!("Probe #{}", idx + 1))
+                    .to_string();
+                let prompt = val["vars"]["prompt"]
+                    .as_str()
+                    .or_else(|| val["prompt"].as_str())
+                    .or_else(|| val["input"].as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let mut assertions = Vec::new();
+                if let Some(arr) = val["assert"].as_array() {
+                    for a in arr {
+                        if let Ok(ast) = serde_json::from_value::<Assertion>(a.clone()) {
+                            assertions.push(ast);
+                        }
+                    }
+                }
+                tests.push(TestCase {
+                    description: desc,
+                    vars: TestVars { prompt },
+                    assert: assertions,
+                });
+            }
+        }
+        Ok(tests)
+    } else if extension == "json" {
+        let tests: Vec<TestCase> = serde_json::from_str(&content)?;
+        Ok(tests)
+    } else {
+        let tests: Vec<TestCase> = serde_yaml::from_str(&content)?;
+        Ok(tests)
+    }
+}
+
 /// Run synthetic red team security benchmark against configured models and prompts.
 pub async fn run_redteam(
     config_path: &str,
     target_model: Option<&str>,
+    concurrency: usize,
+    dataset_path: Option<&std::path::Path>,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     let start_time = Instant::now();
     println!(
@@ -98,6 +152,19 @@ pub async fn run_redteam(
 
     let raw_config = fs::read_to_string(config_path)?;
     let config: RedTeamConfig = serde_yaml::from_str(&raw_config)?;
+
+    let tests_to_run = if let Some(dpath) = dataset_path {
+        println!(
+            "{:<20}: {}",
+            "Custom Dataset".bold(),
+            dpath.display().to_string().yellow()
+        );
+        load_dataset_tests(dpath)?
+    } else {
+        config.tests.clone()
+    };
+
+    let concurrency = if concurrency == 0 { 5 } else { concurrency };
 
     // Resolve API key
     let mut api_key = std::env::var("GEMINI_API_KEY").unwrap_or_default();
@@ -138,14 +205,19 @@ pub async fn run_redteam(
     println!("{:<20}: {}", "Target Model".bold(), model_id.cyan());
     println!(
         "{:<20}: {}",
+        "Worker Concurrency".bold(),
+        concurrency.to_string().green()
+    );
+    println!(
+        "{:<20}: {}",
         "Prompts Evaluated".bold(),
         config.prompts.len()
     );
-    println!("{:<20}: {}", "Attack Scenarios".bold(), config.tests.len());
+    println!("{:<20}: {}", "Attack Scenarios".bold(), tests_to_run.len());
     println!(
         "{:<20}: {}",
         "Total Probes".bold(),
-        config.prompts.len() * config.tests.len()
+        config.prompts.len() * tests_to_run.len()
     );
     println!(
         "{}",
@@ -210,94 +282,124 @@ pub async fn run_redteam(
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
 
-    let mut results: Vec<EvaluationResult> = Vec::new();
+    let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrency));
+    let mut probe_handles = Vec::new();
 
-    // Execute evaluations
+    println!(
+        "\n{} Dispatching parallel probe execution across {} workers...",
+        "==>".blue().bold(),
+        concurrency
+    );
+
     for (prompt_name, system_instruction) in &loaded_prompts {
-        println!(
-            "\n{} Evaluating prompt target: {}",
-            "==>".blue().bold(),
-            prompt_name.yellow().bold()
-        );
+        for test in &tests_to_run {
+            let sem = semaphore.clone();
+            let client = client.clone();
+            let model_id = model_id.clone();
+            let api_key = api_key.clone();
+            let prompt_name = prompt_name.clone();
+            let system_instruction = system_instruction.clone();
+            let test = test.clone();
 
-        for test in &config.tests {
-            let probe_start = Instant::now();
-            print!("  Running probe: {:<60} ... ", test.description);
-            std::io::Write::flush(&mut std::io::stdout())?;
+            probe_handles.push(tokio::spawn(async move {
+                let _permit = sem.acquire().await.unwrap();
+                let probe_start = Instant::now();
 
-            // Query Gemini API
-            let url = format!(
-                "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-                model_id, api_key
-            );
+                let url = format!(
+                    "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+                    model_id, api_key
+                );
 
-            let payload = serde_json::json!({
-                "system_instruction": {
-                    "parts": [
-                        { "text": system_instruction }
-                    ]
-                },
-                "contents": [
-                    {
-                        "role": "user",
+                let payload = serde_json::json!({
+                    "system_instruction": {
                         "parts": [
-                            { "text": test.vars.prompt }
+                            { "text": system_instruction }
                         ]
+                    },
+                    "contents": [
+                        {
+                            "role": "user",
+                            "parts": [
+                                { "text": test.vars.prompt }
+                            ]
+                        }
+                    ],
+                    "generationConfig": {
+                        "maxOutputTokens": 256,
+                        "temperature": 0.0
                     }
-                ],
-                "generationConfig": {
-                    "maxOutputTokens": 256,
-                    "temperature": 0.0
-                }
-            });
+                });
 
-            let response = client.post(&url).json(&payload).send().await;
+                let response = client.post(&url).json(&payload).send().await;
+                let probe_duration = probe_start.elapsed().as_millis();
 
-            let probe_duration = probe_start.elapsed().as_millis();
+                let (output_text, passed, reason) = match response {
+                    Ok(resp) => {
+                        if resp.status().is_success() {
+                            let json_val: serde_json::Value = resp.json().await.unwrap_or_default();
+                            let text = json_val["candidates"][0]["content"]["parts"][0]["text"]
+                                .as_str()
+                                .unwrap_or("")
+                                .trim()
+                                .to_string();
 
-            let (output_text, passed, reason) = match response {
-                Ok(resp) => {
-                    if resp.status().is_success() {
-                        let json_val: serde_json::Value = resp.json().await.unwrap_or_default();
-                        let text = json_val["candidates"][0]["content"]["parts"][0]["text"]
-                            .as_str()
-                            .unwrap_or("")
-                            .trim()
-                            .to_string();
-
-                        let (pass, fail_reason) = evaluate_assertions(&text, &test.assert);
-                        (text, pass, fail_reason)
-                    } else {
-                        let err_text = resp.text().await.unwrap_or_default();
-                        (
-                            format!("HTTP Error: {err_text}"),
-                            false,
-                            Some(format!("API returned error status: {err_text}")),
-                        )
+                            let (pass, fail_reason) = evaluate_assertions(&text, &test.assert);
+                            (text, pass, fail_reason)
+                        } else {
+                            let err_text = resp.text().await.unwrap_or_default();
+                            (
+                                format!("HTTP Error: {err_text}"),
+                                false,
+                                Some(format!("API returned error status: {err_text}")),
+                            )
+                        }
                     }
-                }
-                Err(e) => (
-                    format!("Network Error: {e}"),
-                    false,
-                    Some(format!("Request failed: {e}")),
-                ),
-            };
+                    Err(e) => (
+                        format!("Network Error: {e}"),
+                        false,
+                        Some(format!("Request failed: {e}")),
+                    ),
+                };
 
-            if passed {
-                println!("{}", "PASS".green().bold());
-            } else {
-                println!("{}", "FAIL (Caught Vulnerability)".red().bold());
+                EvaluationResult {
+                    test_name: test.description,
+                    prompt_name,
+                    user_input: test.vars.prompt,
+                    model_output: output_text,
+                    passed,
+                    failure_reason: reason,
+                    latency_ms: probe_duration,
+                }
+            }));
+        }
+    }
+
+    let mut results = Vec::new();
+    for handle in probe_handles {
+        match handle.await {
+            Ok(result) => {
+                let status_badge = if result.passed {
+                    "PASS".green().bold()
+                } else {
+                    "VULNERABLE".red().bold()
+                };
+                let display_name = if result.test_name.len() > 45 {
+                    format!("{}...", &result.test_name[..42])
+                } else {
+                    result.test_name.clone()
+                };
+                println!(
+                    "  [{:<10}] {:<22} | {:<45} ({:>4}ms)",
+                    status_badge,
+                    result.prompt_name.yellow(),
+                    display_name,
+                    result.latency_ms
+                );
+                results.push(result);
             }
-
-            results.push(EvaluationResult {
-                test_name: test.description.clone(),
-                prompt_name: prompt_name.clone(),
-                user_input: test.vars.prompt.clone(),
-                model_output: output_text,
-                passed,
-                failure_reason: reason,
-                latency_ms: probe_duration,
-            });
+            Err(e) => {
+                eprintln!("Task execution error: {e}");
+            }
         }
     }
 
@@ -1011,6 +1113,21 @@ mod tests {
         let content = fs::read_to_string(&temp_path).unwrap();
         assert!(content.contains("<testsuites errors=\"0\" failures=\"1\""));
         assert!(content.contains("<failure message=\"Caught Vulnerability\""));
+        let _ = fs::remove_file(temp_path);
+    }
+
+    #[test]
+    fn test_load_dataset_tests_jsonl() {
+        let temp_path = std::env::temp_dir().join("test_dataset.jsonl");
+        let data = r#"{"description": "Test Probe 1", "vars": {"prompt": "test prompt 1"}, "assert": [{"type": "not-icontains", "value": "secret"}]}
+{"description": "Test Probe 2", "vars": {"prompt": "test prompt 2"}, "assert": [{"type": "icontains", "value": "denied"}]}
+"#;
+        fs::write(&temp_path, data).unwrap();
+        let tests = load_dataset_tests(&temp_path).unwrap();
+        assert_eq!(tests.len(), 2);
+        assert_eq!(tests[0].description, "Test Probe 1");
+        assert_eq!(tests[0].vars.prompt, "test prompt 1");
+        assert_eq!(tests[1].description, "Test Probe 2");
         let _ = fs::remove_file(temp_path);
     }
 }

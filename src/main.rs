@@ -19,11 +19,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Analyze a suspicious file or payload for high entropy and threat indicators
+    /// Analyze a suspicious file or batch directory for high entropy and threat indicators
     Threat {
         /// Target file path to analyze
         #[arg(short, long)]
-        sample: PathBuf,
+        sample: Option<PathBuf>,
+
+        /// Directory path to batch triage all files
+        #[arg(short, long)]
+        dir: Option<PathBuf>,
 
         /// Minimum printable string length
         #[arg(long, default_value_t = 4)]
@@ -55,6 +59,14 @@ enum Commands {
         #[arg(short, long)]
         model: Option<String>,
 
+        /// Worker concurrency limit for parallel probe execution
+        #[arg(long, default_value_t = 5)]
+        concurrency: usize,
+
+        /// Optional external test dataset path (.jsonl, .json, .yaml)
+        #[arg(short, long)]
+        dataset: Option<PathBuf>,
+
         /// Regenerate HTML dashboard from existing JSON report
         #[arg(long)]
         render_from: Option<PathBuf>,
@@ -75,31 +87,60 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match cli.command {
         Commands::Threat {
             sample,
+            dir,
             min_length: _,
             json,
         } => {
-            if !sample.exists() {
+            if let Some(dir_path) = dir {
+                if !dir_path.exists() || !dir_path.is_dir() {
+                    eprintln!(
+                        "{}: Target directory '{}' does not exist or is not a directory.",
+                        "Error".red().bold(),
+                        dir_path.display()
+                    );
+                    std::process::exit(1);
+                }
+
+                let report = threat::scan_directory(&dir_path)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    threat::print_batch_report(&report, dir_path.to_str().unwrap_or("."));
+                }
+
+                if report.critical_files > 0 || report.high_files > 0 {
+                    std::process::exit(2);
+                }
+            } else if let Some(sample_path) = sample {
+                if !sample_path.exists() {
+                    eprintln!(
+                        "{}: Target sample '{}' does not exist.",
+                        "Error".red().bold(),
+                        sample_path.display()
+                    );
+                    std::process::exit(1);
+                }
+
+                let data = fs::read(&sample_path)?;
+                let report = threat::analyze_payload(&data);
+
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    threat::print_report(&report, sample_path.to_str());
+                }
+
+                if report.severity == threat::ThreatSeverity::Critical
+                    || report.severity == threat::ThreatSeverity::High
+                {
+                    std::process::exit(2);
+                }
+            } else {
                 eprintln!(
-                    "{}: Target sample '{}' does not exist.",
-                    "Error".red().bold(),
-                    sample.display()
+                    "{}: Please provide either --sample <file> or --dir <directory>.",
+                    "Error".red().bold()
                 );
                 std::process::exit(1);
-            }
-
-            let data = fs::read(&sample)?;
-            let report = threat::analyze_payload(&data);
-
-            if json {
-                println!("{}", serde_json::to_string_pretty(&report)?);
-            } else {
-                threat::print_report(&report, sample.to_str());
-            }
-
-            if report.severity == threat::ThreatSeverity::Critical
-                || report.severity == threat::ThreatSeverity::High
-            {
-                std::process::exit(2);
             }
         }
 
@@ -110,6 +151,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Redteam {
             config,
             model,
+            concurrency,
+            dataset,
             render_from,
         } => {
             if let Some(json_path) = render_from {
@@ -128,7 +171,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .bold()
                 );
             } else {
-                let all_passed = redteam::run_redteam(&config, model.as_deref()).await?;
+                let all_passed = redteam::run_redteam(
+                    &config,
+                    model.as_deref(),
+                    concurrency,
+                    dataset.as_deref(),
+                )
+                .await?;
                 if !all_passed {
                     // Exit with code 100 to signal caught vulnerabilities/assertion failures
                     std::process::exit(100);

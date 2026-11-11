@@ -231,6 +231,197 @@ pub fn print_report(report: &ThreatReport, filename: Option<&str>) {
     println!();
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchThreatReport {
+    pub total_files: usize,
+    pub clean_files: usize,
+    pub low_files: usize,
+    pub medium_files: usize,
+    pub high_files: usize,
+    pub critical_files: usize,
+    pub total_bytes: usize,
+    pub duration_ms: u128,
+    pub file_reports: Vec<FileThreatSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileThreatSummary {
+    pub filename: String,
+    pub relative_path: String,
+    pub size_bytes: usize,
+    pub entropy: f64,
+    pub severity: ThreatSeverity,
+    pub indicators: Vec<String>,
+}
+
+pub fn scan_directory(dir_path: &std::path::Path) -> std::io::Result<BatchThreatReport> {
+    let start = std::time::Instant::now();
+    let mut file_reports = Vec::new();
+    let mut total_bytes = 0;
+    let mut clean_files = 0;
+    let mut low_files = 0;
+    let mut medium_files = 0;
+    let mut high_files = 0;
+    let mut critical_files = 0;
+
+    let mut entries = Vec::new();
+    collect_files_recursive(dir_path, &mut entries)?;
+
+    for entry in entries {
+        if let Ok(data) = std::fs::read(&entry) {
+            total_bytes += data.len();
+            let report = analyze_payload(&data);
+            match report.severity {
+                ThreatSeverity::Clean => clean_files += 1,
+                ThreatSeverity::Low => low_files += 1,
+                ThreatSeverity::Medium => medium_files += 1,
+                ThreatSeverity::High => high_files += 1,
+                ThreatSeverity::Critical => critical_files += 1,
+            }
+            let rel_path = entry
+                .strip_prefix(dir_path)
+                .unwrap_or(&entry)
+                .to_string_lossy()
+                .to_string();
+            let filename = entry
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+
+            file_reports.push(FileThreatSummary {
+                filename,
+                relative_path: rel_path,
+                size_bytes: data.len(),
+                entropy: report.entropy,
+                severity: report.severity,
+                indicators: report.detected_indicators,
+            });
+        }
+    }
+
+    Ok(BatchThreatReport {
+        total_files: file_reports.len(),
+        clean_files,
+        low_files,
+        medium_files,
+        high_files,
+        critical_files,
+        total_bytes,
+        duration_ms: start.elapsed().as_millis(),
+        file_reports,
+    })
+}
+
+fn collect_files_recursive(
+    dir: &std::path::Path,
+    files: &mut Vec<std::path::PathBuf>,
+) -> std::io::Result<()> {
+    if dir.is_dir() {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                collect_files_recursive(&path, files)?;
+            } else if path.is_file() {
+                files.push(path);
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn print_batch_report(report: &BatchThreatReport, dir_name: &str) {
+    println!();
+    println!(
+        "{}",
+        "================================================================================".blue()
+    );
+    println!(
+        "{}",
+        "        NETHER WARD: BATCH DIRECTORY THREAT TRIAGE REPORT (RUST)                "
+            .bold()
+            .cyan()
+    );
+    println!(
+        "{}",
+        "================================================================================".blue()
+    );
+    println!("{:<24}: {}", "Target Directory".bold(), dir_name);
+    println!(
+        "{:<24}: {} files",
+        "Total Files Scanned".bold(),
+        report.total_files
+    );
+    println!(
+        "{:<24}: {:.2} KB",
+        "Total Scanned Volume".bold(),
+        report.total_bytes as f64 / 1024.0
+    );
+    println!(
+        "{:<24}: {} ms",
+        "Execution Latency".bold(),
+        report.duration_ms
+    );
+    println!();
+    println!("{}", "--- SEVERITY BREAKDOWN ---".bold());
+    println!(
+        "{:<24}: {}",
+        "Clean Files".bold(),
+        report.clean_files.to_string().green()
+    );
+    println!(
+        "{:<24}: {}",
+        "Low Risk Files".bold(),
+        report.low_files.to_string().cyan()
+    );
+    println!(
+        "{:<24}: {}",
+        "Medium Risk Files".bold(),
+        report.medium_files.to_string().yellow()
+    );
+    println!(
+        "{:<24}: {}",
+        "High Risk Files".bold(),
+        report.high_files.to_string().red().bold()
+    );
+    println!(
+        "{:<24}: {}",
+        "Critical Threat Files".bold(),
+        report.critical_files.to_string().white().on_red().bold()
+    );
+    println!();
+    println!(
+        "{:<35} {:<12} {:<14} {:<16}",
+        "FILE PATH", "SIZE", "ENTROPY", "SEVERITY"
+    );
+    println!(
+        "{}",
+        "--------------------------------------------------------------------------------".blue()
+    );
+    for f in &report.file_reports {
+        let sev_str = match f.severity {
+            ThreatSeverity::Clean => "CLEAN".green(),
+            ThreatSeverity::Low => "LOW".cyan(),
+            ThreatSeverity::Medium => "MEDIUM".yellow(),
+            ThreatSeverity::High => "HIGH".red().bold(),
+            ThreatSeverity::Critical => "CRITICAL".white().on_red().bold(),
+        };
+        println!(
+            "{:<35} {:<12} {:<14.2} {:<16}",
+            f.relative_path,
+            format!("{} B", f.size_bytes),
+            f.entropy,
+            sev_str
+        );
+    }
+    println!(
+        "{}",
+        "================================================================================".blue()
+    );
+    println!();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,5 +469,24 @@ mod tests {
             .detected_indicators
             .iter()
             .any(|i| i.contains("/etc/shadow")));
+    }
+
+    #[test]
+    fn test_batch_directory_scan() {
+        let temp_dir = std::env::temp_dir().join("nether_ward_test_batch");
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let file1 = temp_dir.join("clean.txt");
+        let file2 = temp_dir.join("malicious.sh");
+        std::fs::write(&file1, b"hello world clean file").unwrap();
+        std::fs::write(&file2, b"rm -rf /var/log && cat /etc/shadow").unwrap();
+
+        let report = scan_directory(&temp_dir).unwrap();
+        assert_eq!(report.total_files, 2);
+        assert!(report.clean_files >= 1);
+        assert!(report.high_files + report.critical_files >= 1);
+
+        let _ = std::fs::remove_file(file1);
+        let _ = std::fs::remove_file(file2);
+        let _ = std::fs::remove_dir(temp_dir);
     }
 }
