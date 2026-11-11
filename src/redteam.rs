@@ -463,11 +463,12 @@ fn write_junit_xml(
     }
 
     for (prompt, tests) in prompt_groups {
+        let clean_prompt = prompt.trim_end_matches(".txt");
         let group_fails = tests.iter().filter(|t| !t.passed).count();
         let group_time: f64 = tests.iter().map(|t| t.latency_ms as f64 / 1000.0).sum();
         xml.push_str(&format!(
             "  <testsuite name=\"{}\" tests=\"{}\" failures=\"{}\" time=\"{:.3}\">\n",
-            prompt,
+            clean_prompt,
             tests.len(),
             group_fails,
             group_time
@@ -479,7 +480,7 @@ fn write_junit_xml(
                 xml.push_str(&format!(
                     "    <testcase name=\"{}\" classname=\"{}\" time=\"{:.3}\" />\n",
                     t.test_name.replace('"', "&quot;"),
-                    prompt.replace('"', "&quot;"),
+                    clean_prompt.replace('"', "&quot;"),
                     time_sec
                 ));
             } else {
@@ -487,7 +488,7 @@ fn write_junit_xml(
                 xml.push_str(&format!(
                     "    <testcase name=\"{}\" classname=\"{}\" time=\"{:.3}\">\n",
                     t.test_name.replace('"', "&quot;"),
-                    prompt.replace('"', "&quot;"),
+                    clean_prompt.replace('"', "&quot;"),
                     time_sec
                 ));
                 xml.push_str(&format!(
@@ -530,6 +531,14 @@ fn write_html_report(report: &RedTeamSummaryReport, path: &str) -> std::io::Resu
     html.push_str("pre { background: #161b22; padding: 8px; border-radius: 4px; overflow-x: auto; font-size: 0.85rem; color: #c9d1d9; }\n");
     html.push_str("</style>\n</head>\n<body>\n<div class=\"container\">\n");
     html.push_str("<h1>Nether Ward: Synthetic Red Team Security Matrix</h1>\n");
+    html.push_str(
+        "<div style=\"display: flex; gap: 1rem; margin-bottom: 1.5rem; flex-wrap: wrap;\">\n",
+    );
+    html.push_str("  <a href=\"./redteam.junit.xml\" target=\"_blank\" style=\"background: #238636; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: bold; font-size: 0.9rem;\">View JUnit XML</a>\n");
+    html.push_str("  <a href=\"./redteam_report.json\" target=\"_blank\" style=\"background: #1f6feb; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: bold; font-size: 0.9rem;\">View Raw JSON Metrics</a>\n");
+    html.push_str("  <a href=\"./values.json\" target=\"_blank\" style=\"background: #8957e5; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: bold; font-size: 0.9rem;\">View Values Config</a>\n");
+    html.push_str("  <a href=\"https://github.com/shanmukha-sai-chinnam/nether-ward\" target=\"_blank\" style=\"background: #30363d; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: bold; font-size: 0.9rem;\">GitHub Repository</a>\n");
+    html.push_str("</div>\n");
     html.push_str("<div class=\"stats\">\n");
     html.push_str(&format!(
         "<div class=\"stat-box\"><div>Total Probes</div><div class=\"stat-num\">{}</div></div>\n",
