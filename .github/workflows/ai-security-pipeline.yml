@@ -1,4 +1,4 @@
-name: AI Infrastructure & Synthetic Red Team CI/CD
+name: Nether Ward AI Security CI/CD (Rust)
 
 on:
   push:
@@ -18,24 +18,31 @@ permissions:
 
 jobs:
   validate:
-    name: Validate Infrastructure Configs
+    name: Validate Rust Code & Declarative Configs
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
       - name: Validate JSON Schemas
         run: |
           echo "==> Validating values.json declarative configuration..."
           jq empty values.json
-          echo "==> Validating package.json..."
-          jq empty package.json
 
-      - name: Validate Shell Script Syntax
+      - name: Format Check (cargo fmt)
         run: |
-          echo "==> Verifying shell script syntax across bin/..."
-          bash -n bin/gateway bin/inference bin/eval bin/analyze-threat bin/redteam
-          echo "All shell scripts passed syntax check."
+          echo "==> Checking Rust formatting..."
+          cargo fmt --all -- --check
+
+      - name: Linter Check (cargo clippy)
+        run: |
+          echo "==> Running Clippy linter..."
+          cargo clippy --all-targets -- -D warnings
 
   secret-scan:
     name: Static Secret & Credential Scan
@@ -57,29 +64,19 @@ jobs:
           echo "No exposed credentials detected. Static security check passed."
 
   threat-triage-unit:
-    name: Threat Triage Engine Heuristics
+    name: Threat Triage Engine Unit Tests (Rust)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
 
-      - name: Run Heuristics & Static Feature Tests
+      - name: Run Cargo Test Suite
         run: |
-          echo "==> Testing autonomous threat triage engine static heuristics..."
-          PYTHONPATH=. python3 -c "
-          from src.threat_analyzer import calculate_entropy, extract_strings
-          assert calculate_entropy(b'AAAAAAA') == 0.0, 'Zero entropy test failed'
-          assert calculate_entropy(bytes(range(256))) == 8.0, 'Max entropy test failed'
-          extracted = extract_strings(b'PayloadHeader\x00\x01\x02TargetCommand\x00')
-          assert 'PayloadHeader' in extracted, 'Header extraction failed'
-          assert 'TargetCommand' in extracted, 'Target extraction failed'
-          print('Threat analyzer static heuristics verified: Entropy calculation and string extraction functional.')
-          "
+          echo "==> Testing autonomous threat triage engine and heuristics in Rust..."
+          cargo test --verbose
 
   ai-redteam-eval:
     name: Synthetic Red Team (OWASP Top 10 for LLMs)
@@ -89,29 +86,24 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: "npm"
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
 
-      - name: Install Dependencies
-        run: npm ci || npm install --no-audit
+      - name: Build Nether Ward Release Binary
+        run: cargo build --release
 
       - name: Run Synthetic Red Team Evaluation
         id: redteam
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          PROMPTFOO_DISABLE_TELEMETRY: "1"
         run: |
           if [ -z "${GEMINI_API_KEY:-}" ]; then
             echo "::error::GEMINI_API_KEY secret is not configured in GitHub repository."
             echo "Add GEMINI_API_KEY to Repository Settings -> Secrets and variables -> Actions."
             exit 1
           fi
-          echo "==> Starting OWASP Top 10 for LLMs Synthetic Red Team Evaluation..."
-          # ./bin/redteam outputs redteam_report.json, redteam_report.html, and redteam.junit.xml
-          ./bin/redteam
+          echo "==> Starting Native Rust OWASP Top 10 for LLMs Synthetic Red Team Evaluation..."
+          ./target/release/nether-ward redteam --config config/redteam_config.yaml
         # Allow exit code 100 (assertions failed / vulnerabilities detected) so reports and artifacts publish
         continue-on-error: true
 

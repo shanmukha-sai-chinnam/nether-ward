@@ -1,4 +1,6 @@
-# Direnv & Nix build artifacts
+# Cargo & Rust build artifacts
+target/
+Cargo.lock.bak
 .direnv/
 result
 result-*

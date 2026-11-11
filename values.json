@@ -1,9 +1,10 @@
 {
   "name": "nether-ward",
-  "version": "1.0.0",
-  "description": "Nether Ward: Declarative AI Infrastructure Platform & Autonomous Cybersecurity Sentinel",
+  "version": "0.2.0",
+  "description": "Nether Ward: Declarative AI Infrastructure Platform & Autonomous Cybersecurity Sentinel in Pure Rust",
+  "runtime": "rust",
   "gateway": {
-    "host": "127.0.0.1",
+    "host": "0.0.0.0",
     "port": 4000
   },
   "inference": {
@@ -13,6 +14,7 @@
     "default_model": "qwen2.5-coder:1.5b"
   },
   "evals": {
-    "framework": "promptfoo"
+    "framework": "nether-ward-native",
+    "default_model": "gemini-flash-lite-latest"
   }
 }

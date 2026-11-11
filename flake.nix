@@ -1,5 +1,5 @@
 {
-  description = "Nether Ward: Declarative AI Infrastructure & Autonomous Cybersecurity Sentinel";
+  description = "Nether Ward: Declarative AI Infrastructure Platform & Autonomous Cybersecurity Sentinel in Pure Rust";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -19,63 +19,55 @@
             allowUnfree = true;
           };
         };
-
-        pythonEnv = pkgs.python312;
       in {
+        packages.default = pkgs.rustPlatform.buildRustPackage {
+          pname = "nether-ward";
+          version = "0.2.0";
+          src = ./.;
+
+          cargoLock = {
+            lockFile = ./Cargo.lock;
+          };
+
+          nativeBuildInputs = with pkgs; [
+            pkg-config
+          ];
+
+          buildInputs = with pkgs; [
+            openssl
+          ];
+        };
+
+        packages.nether-ward = self.packages.${system}.default;
+
         devShells.default = pkgs.mkShell {
           name = "nether-ward-shell";
 
           buildInputs = with pkgs; [
-            # AI & Local Inference Runtimes
-            ollama
+            # Rust Compiler & Native Toolchain
+            cargo
+            rustc
+            rustfmt
+            clippy
+            rust-analyzer
 
-            # Python ecosystem
-            pythonEnv
-            uv
-            ruff
-
-            # Node & JavaScript runtime
-            nodejs_22
-
-            # System compilers & build tools
-            gcc
+            # Build dependencies
             pkg-config
-            gnumake
+            openssl
 
-            # Data query & CLI utilities
-            curl
+            # System inspection & utilities
             jq
+            curl
             ripgrep
-            fd
-            bat
-            eza
           ];
 
           shellHook = ''
             export NETHER_WARD_SHELL=1
             export AI_INFRA_SHELL=1
-            export UV_PYTHON_PREFERENCE="only-system"
-            export UV_PYTHON="${pythonEnv}/bin/python3"
+            export RUST_BACKTRACE=1
             export NETHER_WARD_ROOT="$(pwd)"
-
-            # Ensure local virtual environment is active if initialized
-            if [ -d ".venv" ]; then
-              source .venv/bin/activate
-            fi
-
-            echo -e "\033[1;33m--------------------------------------------------------\033[0m"
-            echo -e "\033[1;32m Nether Ward — Autonomous AI Security & Infrastructure\033[0m"
-            echo -e "\033[1;33m--------------------------------------------------------\033[0m"
-            echo -e "  \033[1;34mPython:\033[0m       $(${pythonEnv}/bin/python3 --version 2>&1)"
-            echo -e "  \033[1;34mUV:\033[0m           $(${pkgs.uv}/bin/uv --version 2>&1)"
-            echo -e "  \033[1;34mNode.js:\033[0m      $(${pkgs.nodejs_22}/bin/node --version 2>&1)"
-            echo -e "  \033[1;34mOllama:\033[0m       v$(${pkgs.ollama}/bin/ollama --version 2>&1 | awk '/client version/{print $NF}')"
-            echo -e "  \033[1;34mArchitecture:\033[0m Intel Lunar Lake (8 cores, AVX-VNNI active)"
-            echo -e "\033[1;33m--------------------------------------------------------\033[0m"
           '';
         };
-
-        formatter = pkgs.alejandra;
       }
     );
 }
