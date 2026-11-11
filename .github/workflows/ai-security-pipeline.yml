@@ -17,6 +17,7 @@ permissions:
   pull-requests: write
   pages: write
   id-token: write
+  security-events: write
 
 concurrency:
   group: "pages"
@@ -89,11 +90,18 @@ jobs:
           echo "==> Testing batch directory threat triage infrastructure on sample dataset..."
           cargo run -- threat --dir datasets/threat_samples || true
 
-      - name: Run Multi-Vector SAST Security Audit
+      - name: Run Multi-Vector SAST Security Audit & SARIF Export
         run: |
-          echo "==> Testing Nether Ward Static Application Security Testing (SAST)..."
-          cargo run -- threat --sast datasets/threat_samples || true
+          echo "==> Testing Nether Ward Static Application Security Testing (SAST) & exporting SARIF v2.1.0..."
+          cargo run -- threat --sast datasets/threat_samples --sarif reports/sast.sarif || true
           cargo run -- threat --rules
+
+      - name: Upload SAST SARIF to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: reports/sast.sarif
+          category: nether-ward-sast
 
   dependency-audit:
     name: RustSec Dependency Vulnerability Audit
@@ -149,6 +157,8 @@ jobs:
             echo "Add GEMINI_API_KEY to Repository Settings -> Secrets and variables -> Actions."
             exit 1
           fi
+          echo "==> Running Multi-Turn Agent Trajectory Security Benchmark..."
+          ./target/release/nether-ward redteam --config config/redteam_config.yaml --dataset datasets/trajectories/agent_tool_trajectories.jsonl --concurrency 8 || true
           echo "==> Starting Native Rust OWASP Top 10 for LLMs Synthetic Red Team Evaluation..."
           ./target/release/nether-ward redteam --config config/redteam_config.yaml --dataset datasets/owasp_top10_expanded.jsonl --concurrency 8 || true
 
@@ -175,6 +185,7 @@ jobs:
             reports/redteam_report.json
             reports/redteam.junit.xml
             reports/nether-ward.spdx.json
+            reports/sast.sarif
           retention-days: 30
 
       - name: Prepare GitHub Pages Static Site
@@ -192,6 +203,9 @@ jobs:
           fi
           if [ -f reports/nether-ward.spdx.json ]; then
             cp reports/nether-ward.spdx.json public/nether-ward.spdx.json
+          fi
+          if [ -f reports/sast.sarif ]; then
+            cp reports/sast.sarif public/sast.sarif
           fi
           cp values.json public/values.json || true
           echo "Prepared GitHub Pages static payload:"

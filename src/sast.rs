@@ -577,9 +577,128 @@ pub fn print_rules() {
     println!();
 }
 
+pub fn export_sarif(report: &SastReport, output_path: &Path) -> std::io::Result<()> {
+    let rules = get_default_rules();
+    let sarif_rules: Vec<serde_json::Value> = rules
+        .into_iter()
+        .map(|r| {
+            let default_level = match r.severity {
+                SastSeverity::Critical | SastSeverity::High => "error",
+                SastSeverity::Medium => "warning",
+                SastSeverity::Low | SastSeverity::Info => "note",
+            };
+            serde_json::json!({
+                "id": r.id,
+                "name": r.title,
+                "shortDescription": { "text": r.title },
+                "fullDescription": { "text": format!("{} [{}]", r.title, r.category) },
+                "help": { "text": r.recommendation },
+                "defaultConfiguration": { "level": default_level }
+            })
+        })
+        .collect();
+
+    let sarif_results: Vec<serde_json::Value> = report
+        .findings
+        .iter()
+        .map(|f| {
+            let level = match f.severity {
+                SastSeverity::Critical | SastSeverity::High => "error",
+                SastSeverity::Medium => "warning",
+                SastSeverity::Low | SastSeverity::Info => "note",
+            };
+
+            let loc = f.file_path.as_deref().unwrap_or("unknown");
+            let line = f.line_number.unwrap_or(1);
+
+            serde_json::json!({
+                "ruleId": f.rule_id,
+                "level": level,
+                "message": {
+                    "text": format!("{}: {} (Matched: {})", f.title, f.recommendation, f.matched_snippet)
+                },
+                "locations": [
+                    {
+                        "physicalLocation": {
+                            "artifactLocation": {
+                                "uri": loc,
+                                "uriBaseId": "%SRCROOT%"
+                            },
+                            "region": {
+                                "startLine": line,
+                                "startColumn": 1
+                            }
+                        }
+                    }
+                ]
+            })
+        })
+        .collect();
+
+    let sarif_doc = serde_json::json!({
+        "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [
+            {
+                "tool": {
+                    "driver": {
+                        "name": "Nether Ward",
+                        "version": "0.2.0",
+                        "informationUri": "https://github.com/shanmukha-sai-chinnam/nether-ward",
+                        "rules": sarif_rules
+                    }
+                },
+                "results": sarif_results
+            }
+        ]
+    });
+
+    if let Some(parent) = output_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(output_path, serde_json::to_string_pretty(&sarif_doc)?)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_export_sarif() {
+        let findings = vec![VulnerabilityFinding {
+            rule_id: "NW-SEC-001".to_string(),
+            title: "AWS Access Key ID Detected".to_string(),
+            category: RuleCategory::SecretLeak,
+            severity: SastSeverity::Critical,
+            file_path: Some("config/credentials.env".to_string()),
+            line_number: Some(2),
+            matched_snippet: "AKIA***REDACTED***MPLE".to_string(),
+            recommendation: "Rotate compromised AWS credentials.".to_string(),
+        }];
+
+        let report = SastReport {
+            total_files_scanned: 1,
+            total_findings: 1,
+            critical_count: 1,
+            high_count: 0,
+            medium_count: 0,
+            low_count: 0,
+            info_count: 0,
+            duration_ms: 10,
+            findings,
+        };
+
+        let temp_path = std::env::temp_dir().join("test_sast.sarif");
+        let res = export_sarif(&report, &temp_path);
+        assert!(res.is_ok());
+
+        let content = fs::read_to_string(&temp_path).unwrap();
+        assert!(content.contains("https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json"));
+        assert!(content.contains("NW-SEC-001"));
+        assert!(content.contains("config/credentials.env"));
+        let _ = fs::remove_file(temp_path);
+    }
 
     #[test]
     fn test_aws_key_detection() {

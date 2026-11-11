@@ -43,7 +43,10 @@ pub struct TestCase {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TestVars {
+    #[serde(default)]
     pub prompt: String,
+    #[serde(default)]
+    pub messages: Option<Vec<crate::gateway::ChatMessage>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -101,6 +104,12 @@ pub fn load_dataset_tests(
                     .or_else(|| val["input"].as_str())
                     .unwrap_or("")
                     .to_string();
+                let messages: Option<Vec<crate::gateway::ChatMessage>> = val["vars"]["messages"]
+                    .as_array()
+                    .or_else(|| val["messages"].as_array())
+                    .and_then(|arr| {
+                        serde_json::from_value(serde_json::Value::Array(arr.clone())).ok()
+                    });
                 let mut assertions = Vec::new();
                 if let Some(arr) = val["assert"].as_array() {
                     for a in arr {
@@ -111,7 +120,7 @@ pub fn load_dataset_tests(
                 }
                 tests.push(TestCase {
                     description: desc,
-                    vars: TestVars { prompt },
+                    vars: TestVars { prompt, messages },
                     assert: assertions,
                 });
             }
@@ -336,12 +345,29 @@ pub async fn run_redteam(
 
                 let response = if is_local {
                     let ep_url = local_ep.unwrap_or_else(|| "http://localhost:4000/v1/chat/completions".to_string());
+                    let messages = if let Some(ref traj) = test.vars.messages {
+                        let mut msgs = Vec::new();
+                        let has_system = traj.iter().any(|m| m.role == "system");
+                        if !has_system && !system_instruction.is_empty() {
+                            msgs.push(serde_json::json!({
+                                "role": "system",
+                                "content": system_instruction
+                            }));
+                        }
+                        for m in traj {
+                            msgs.push(serde_json::to_value(m).unwrap_or_default());
+                        }
+                        msgs
+                    } else {
+                        vec![
+                            serde_json::json!({ "role": "system", "content": system_instruction }),
+                            serde_json::json!({ "role": "user", "content": test.vars.prompt }),
+                        ]
+                    };
+
                     let payload = serde_json::json!({
                         "model": model_id,
-                        "messages": [
-                            { "role": "system", "content": system_instruction },
-                            { "role": "user", "content": test.vars.prompt }
-                        ],
+                        "messages": messages,
                         "max_tokens": 256,
                         "temperature": 0.0
                     });
@@ -351,25 +377,53 @@ pub async fn run_redteam(
                         "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
                         model_id, api_key
                     );
-                    let payload = serde_json::json!({
-                        "system_instruction": {
-                            "parts": [
-                                { "text": system_instruction }
-                            ]
-                        },
-                        "contents": [
-                            {
-                                "role": "user",
-                                "parts": [
-                                    { "text": test.vars.prompt }
-                                ]
+                    let (sys_instr, contents) = if let Some(ref traj) = test.vars.messages {
+                        let mut gemini_contents = Vec::new();
+                        let mut sys = if !system_instruction.is_empty() {
+                            Some(serde_json::json!({
+                                "parts": [{ "text": system_instruction }]
+                            }))
+                        } else {
+                            None
+                        };
+
+                        for m in traj {
+                            let text = m.content.clone().unwrap_or_default();
+                            if m.role == "system" {
+                                sys = Some(serde_json::json!({
+                                    "parts": [{ "text": text }]
+                                }));
+                            } else {
+                                let role = if m.role == "assistant" { "model" } else { "user" };
+                                gemini_contents.push(serde_json::json!({
+                                    "role": role,
+                                    "parts": [{ "text": text }]
+                                }));
                             }
-                        ],
+                        }
+                        (sys, gemini_contents)
+                    } else {
+                        (
+                            Some(serde_json::json!({
+                                "parts": [{ "text": system_instruction }]
+                            })),
+                            vec![serde_json::json!({
+                                "role": "user",
+                                "parts": [{ "text": test.vars.prompt }]
+                            })],
+                        )
+                    };
+
+                    let mut payload = serde_json::json!({
+                        "contents": contents,
                         "generationConfig": {
                             "maxOutputTokens": 256,
                             "temperature": 0.0
                         }
                     });
+                    if let Some(s) = sys_instr {
+                        payload["system_instruction"] = s;
+                    }
                     client.post(&url).json(&payload).send().await
                 };
 
@@ -412,12 +466,24 @@ pub async fn run_redteam(
                             ).await;
                             (text, pass, fail_reason)
                         } else {
+                            let status = resp.status();
                             let err_text = resp.text().await.unwrap_or_default();
-                            (
-                                format!("HTTP Error: {err_text}"),
-                                false,
-                                Some(format!("API returned error status: {err_text}")),
-                            )
+                            if status == reqwest::StatusCode::FORBIDDEN
+                                && (err_text.contains("security_policy_violation")
+                                    || err_text.contains("nether_ward"))
+                            {
+                                (
+                                    format!("Blocked by Nether Ward Sentinel Firewall: {err_text}"),
+                                    true,
+                                    None,
+                                )
+                            } else {
+                                (
+                                    format!("HTTP Error {status}: {err_text}"),
+                                    false,
+                                    Some(format!("API returned error status {status}: {err_text}")),
+                                )
+                            }
                         }
                     }
                     Err(e) => (
@@ -427,10 +493,22 @@ pub async fn run_redteam(
                     ),
                 };
 
+                let user_input_summary = if !test.vars.prompt.is_empty() {
+                    test.vars.prompt.clone()
+                } else if let Some(ref traj) = test.vars.messages {
+                    traj.iter()
+                        .rev()
+                        .find(|m| m.role == "user")
+                        .and_then(|m| m.content.clone())
+                        .unwrap_or_else(|| "Multi-turn agent trajectory".to_string())
+                } else {
+                    "Probe".to_string()
+                };
+
                 EvaluationResult {
                     test_name: test.description,
                     prompt_name,
-                    user_input: test.vars.prompt,
+                    user_input: user_input_summary,
                     model_output: output_text,
                     passed,
                     failure_reason: reason,
@@ -829,6 +907,8 @@ pub fn write_html_report(report: &RedTeamSummaryReport, path: &str) -> std::io::
     html.push_str(".btn-sbom:hover { background: rgba(245, 158, 11, 0.22); border-color: #fbbf24; transform: translateY(-1px); }\n");
     html.push_str(".btn-gh { background: #1e293b; color: #f8fafc; border-color: #334155; }\n");
     html.push_str(".btn-gh:hover { background: #334155; transform: translateY(-1px); }\n");
+    html.push_str(".btn-sarif { background: rgba(56, 189, 248, 0.12); color: #38bdf8; border-color: rgba(56, 189, 248, 0.3); }\n");
+    html.push_str(".btn-sarif:hover { background: rgba(56, 189, 248, 0.22); border-color: #38bdf8; transform: translateY(-1px); }\n");
     html.push_str(".stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }\n");
     html.push_str(".stat-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; padding: 1.25rem 1.5rem; transition: border-color 0.2s ease; }\n");
     html.push_str(".stat-card:hover { border-color: #334155; }\n");
@@ -901,6 +981,9 @@ pub fn write_html_report(report: &RedTeamSummaryReport, path: &str) -> std::io::
     html.push_str("  <div class=\"toolbar\">\n");
     html.push_str("    <a href=\"./redteam.junit.xml\" target=\"_blank\" class=\"btn btn-xml\">JUnit XML</a>\n");
     html.push_str("    <a href=\"./redteam_report.json\" target=\"_blank\" class=\"btn btn-json\">Raw JSON Metrics</a>\n");
+    html.push_str(
+        "    <a href=\"./sast.sarif\" target=\"_blank\" class=\"btn btn-sarif\">SARIF v2.1.0</a>\n",
+    );
     html.push_str(
         "    <a href=\"./values.json\" target=\"_blank\" class=\"btn btn-config\">Values Hub</a>\n",
     );
@@ -1229,6 +1312,7 @@ mod tests {
         assert!(content.contains("LLM01: Prompt Injection Test"));
         assert!(content.contains("Security Violation Detected:"));
         assert!(content.contains("50%"));
+        assert!(content.contains("sast.sarif"));
         let _ = fs::remove_file(temp_path);
     }
 
@@ -1287,6 +1371,22 @@ mod tests {
         assert_eq!(tests[0].description, "Test Probe 1");
         assert_eq!(tests[0].vars.prompt, "test prompt 1");
         assert_eq!(tests[1].description, "Test Probe 2");
+        let _ = fs::remove_file(temp_path);
+    }
+
+    #[test]
+    fn test_load_dataset_trajectory_messages() {
+        let temp_path = std::env::temp_dir().join("test_traj_dataset.jsonl");
+        let data = r#"{"description": "Trajectory Probe", "vars": {"prompt": "run command", "messages": [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "calling bash"}, {"role": "tool", "content": "status: error"}]}, "assert": [{"type": "not-icontains", "value": "system_compromised"}]}"#;
+        fs::write(&temp_path, data).unwrap();
+        let tests = load_dataset_tests(&temp_path).unwrap();
+        assert_eq!(tests.len(), 1);
+        assert_eq!(tests[0].description, "Trajectory Probe");
+        let msgs = tests[0].vars.messages.as_ref().unwrap();
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[0].role, "user");
+        assert_eq!(msgs[0].content.as_deref(), Some("hello"));
+        assert_eq!(msgs[1].role, "assistant");
         let _ = fs::remove_file(temp_path);
     }
 }

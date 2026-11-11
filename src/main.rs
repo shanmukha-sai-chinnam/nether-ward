@@ -35,6 +35,10 @@ enum Commands {
         #[arg(long)]
         sast: Option<PathBuf>,
 
+        /// Export static analysis findings to OASIS SARIF v2.1.0 format
+        #[arg(long)]
+        sarif: Option<PathBuf>,
+
         /// List active threat and vulnerability detection rules
         #[arg(long)]
         rules: bool,
@@ -57,6 +61,10 @@ enum Commands {
         /// Default upstream model target
         #[arg(short, long)]
         model: Option<String>,
+
+        /// Upstream OpenAI-compatible API base URL (e.g. http://localhost:11434/v1)
+        #[arg(long)]
+        upstream: Option<String>,
     },
 
     /// Run the synthetic AI red team security evaluation matrix
@@ -107,6 +115,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             sample,
             dir,
             sast,
+            sarif,
             rules,
             min_length: _,
             json,
@@ -162,6 +171,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         findings,
                     }
                 };
+
+                if let Some(ref sarif_path) = sarif {
+                    sast::export_sarif(&report, sarif_path)?;
+                    println!(
+                        "Exported SARIF v2.1.0 security report: {}",
+                        sarif_path.display().to_string().green()
+                    );
+                }
 
                 if json {
                     println!("{}", serde_json::to_string_pretty(&report)?);
@@ -225,8 +242,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        Commands::Gateway { port, model } => {
-            gateway::run_gateway(port, model).await?;
+        Commands::Gateway {
+            port,
+            model,
+            upstream,
+        } => {
+            gateway::run_gateway(port, model, upstream).await?;
         }
 
         Commands::Redteam {
