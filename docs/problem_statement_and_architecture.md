@@ -106,7 +106,7 @@ Securing autonomous agent systems requires defending across five distinct archit
 - **Automated Credential Redaction**: Automatically redacts matched secrets in console outputs and generated artifacts (`AKIA***REDACTED***`) to prevent secondary leakage during triage.
 
 ### Pillar II: Parallel Synthetic Red Team Matrix (`src/redteam.rs`)
-- **High-Throughput Parallel Engine**: Utilizes bounded asynchronous worker pools via `tokio::sync::Semaphore` to execute multi-prompt attack matrices in parallel (~8x speedup over sequential testing).
+- **High-Throughput Parallel Engine**: Runs bounded asynchronous worker pools via `tokio::sync::Semaphore` to execute multi-prompt attack matrices in parallel (~8x speedup over sequential testing).
 - **OWASP Top 10 for LLMs Benchmark**: Built-in test cases covering Prompt Injection (LLM01), Sensitive Information Disclosure (LLM02), Supply Chain Vulnerabilities (LLM03), Data & Model Poisoning (LLM04), Improper Output Handling (LLM05), Excessive Agency (LLM06), System Prompt Leakage (LLM07), Vector Weaknesses (LLM08), Misinformation (LLM09), and Unbounded Consumption (LLM10).
 - **Dual Target Architecture**: Supports both local offline models (`--endpoint http://localhost:4000/v1/chat/completions` or Ollama) using the standard OpenAI specification, and remote hyperscaler APIs (Gemini 2.5 Flash Lite).
 

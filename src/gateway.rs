@@ -173,7 +173,7 @@ pub fn inspect_tool_calls(
     Ok(())
 }
 
-/// Comprehensive firewall scan of an incoming ChatCompletionRequest with optional in-flight sanitization
+/// Firewall scan of an incoming ChatCompletionRequest with optional in-flight sanitization
 pub fn scan_and_sanitize_incoming_request(
     req: &mut ChatCompletionRequest,
     sanitize: bool,
@@ -199,7 +199,7 @@ pub fn scan_and_sanitize_incoming_request(
     Ok(())
 }
 
-/// Comprehensive firewall scan of outgoing model choices and tool calls with optional in-flight sanitization
+/// Firewall scan of outgoing model choices and tool calls with optional in-flight sanitization
 pub fn scan_and_sanitize_outgoing_response(
     resp: &mut ChatCompletionResponse,
     sanitize: bool,
@@ -225,7 +225,7 @@ pub fn scan_and_sanitize_outgoing_response(
     Ok(())
 }
 
-/// Comprehensive firewall scan of an incoming ChatCompletionRequest
+/// Firewall scan of an incoming ChatCompletionRequest
 #[allow(dead_code)]
 pub fn scan_incoming_request(
     req: &ChatCompletionRequest,
@@ -234,7 +234,7 @@ pub fn scan_incoming_request(
     scan_and_sanitize_incoming_request(&mut cloned, false)
 }
 
-/// Comprehensive firewall scan of outgoing model choices and tool calls
+/// Firewall scan of outgoing model choices and tool calls
 #[allow(dead_code)]
 pub fn scan_outgoing_response(
     resp: &ChatCompletionResponse,

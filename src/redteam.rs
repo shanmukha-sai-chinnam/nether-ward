@@ -955,9 +955,7 @@ pub fn write_html_report(report: &RedTeamSummaryReport, path: &str) -> std::io::
 
     html.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
     html.push_str("<meta charset=\"UTF-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n");
-    html.push_str(
-        "<title>Nether Ward — Autonomous AI Security Sentinel & Red Team Dashboard</title>\n",
-    );
+    html.push_str("<title>Nether Ward — Red Team Security Dashboard</title>\n");
     html.push_str("<link rel=\"preconnect\" href=\"https://fonts.googleapis.com\">\n");
     html.push_str("<link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin>\n");
     html.push_str("<link href=\"https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700;800&display=swap\" rel=\"stylesheet\">\n");

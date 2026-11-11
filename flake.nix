@@ -29,36 +29,38 @@
             lockFile = ./Cargo.lock;
           };
 
-          nativeBuildInputs = with pkgs; [
-            pkg-config
+          nativeBuildInputs = [
+            pkgs.pkg-config
           ];
 
-          buildInputs = with pkgs; [
-            openssl
+          buildInputs = [
+            pkgs.openssl
           ];
         };
 
         packages.nether-ward = self.packages.${system}.default;
 
+        formatter = pkgs.alejandra;
+
         devShells.default = pkgs.mkShell {
           name = "nether-ward-shell";
 
-          buildInputs = with pkgs; [
+          buildInputs = [
             # Rust Compiler & Native Toolchain
-            cargo
-            rustc
-            rustfmt
-            clippy
-            rust-analyzer
+            pkgs.cargo
+            pkgs.rustc
+            pkgs.rustfmt
+            pkgs.clippy
+            pkgs.rust-analyzer
 
             # Build dependencies
-            pkg-config
-            openssl
+            pkgs.pkg-config
+            pkgs.openssl
 
             # System inspection & utilities
-            jq
-            curl
-            ripgrep
+            pkgs.jq
+            pkgs.curl
+            pkgs.ripgrep
           ];
 
           shellHook = ''
