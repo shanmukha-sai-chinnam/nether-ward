@@ -1,0 +1,15 @@
+{
+  "name": "ai-infra",
+  "version": "1.0.0",
+  "description": "Declarative AI Infrastructure Platform & Agentic Toolkit",
+  "type": "module",
+  "scripts": {
+    "eval": "./bin/eval",
+    "eval:view": "npx promptfoo view",
+    "gateway": "./bin/gateway",
+    "inference": "./bin/inference"
+  },
+  "dependencies": {
+    "promptfoo": "^0.125.1"
+  }
+}

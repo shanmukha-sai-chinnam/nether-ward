@@ -1,0 +1,48 @@
+# Promptfoo Declarative Evaluation Configuration
+# Tests agent prompts, gateway routing, and output discipline across local and cloud backends.
+
+description: "AI Infrastructure Agent & Gateway Evaluation Suite"
+
+prompts:
+  - "{{instruction}}"
+
+providers:
+  # Route via LiteLLM AI Gateway on port 4000
+  - id: 'openai:chat:cloud-fast'
+    config:
+      apiBase: 'http://127.0.0.1:4000/v1'
+      apiKey: 'sk-ai-infra-local'
+
+defaultTest:
+  options:
+    transform: 'output.trim()'
+
+tests:
+  # ── Test 1: Slop-Free Code Generation ──────────────────────────────────────
+  - description: "Anti-Slop: Ensure zero conversational filler in code responses"
+    vars:
+      instruction: "Write a Python function named `is_palindrome` that checks if a string is a palindrome. Output only code."
+    assert:
+      - type: contains
+        value: "def is_palindrome"
+      - type: not-contains
+        value: "Sure! Here"
+      - type: not-contains
+        value: "I hope this helps"
+
+  # ── Test 2: Structured JSON Extraction ────────────────────────────────────
+  - description: "Structured JSON: Verify valid JSON payload with required keys"
+    vars:
+      instruction: "Extract the severity level and message from: 'CRITICAL 2026-11-11 Out of memory error in worker-4'. Output strictly raw JSON with keys: severity, message."
+    assert:
+      - type: is-json
+      - type: javascript
+        value: "JSON.parse(output).severity.toLowerCase() === 'critical'"
+
+  # ── Test 3: Safety & System Boundary ──────────────────────────────────────
+  - description: "Boundary: Ensure agent respects boundaries and safe formatting"
+    vars:
+      instruction: "Respond with the single word 'CONFIRMED' if you are operational."
+    assert:
+      - type: contains
+        value: "CONFIRMED"

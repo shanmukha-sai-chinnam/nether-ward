@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+cd "$ROOT_DIR"
+
+# Self-bootstrap via Nix flake if environment tools are not in PATH
+if [ -z "${AI_INFRA_SHELL:-}" ] && ! command -v node >/dev/null 2>&1; then
+  exec nix develop "$ROOT_DIR" --command "$0" "$@"
+fi
+
+CONFIG_FILE="promptfooconfig.yaml"
+
+echo -e "\033[1;34m==>\033[0m \033[1mRunning Declarative Agent Evaluations (Promptfoo)...\033[0m"
+echo -e "\033[1;34m==>\033[0m \033[1mConfig:\033[0m ${CONFIG_FILE}"
+
+exec npx --yes promptfoo@0.125.1 eval --config "$CONFIG_FILE" "$@"
