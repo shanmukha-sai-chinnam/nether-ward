@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub struct ThreatReport {
     pub sample_size_bytes: usize,
     pub entropy: f64,
+    pub max_windowed_entropy: f64,
     pub entropy_risk: String,
     pub extracted_strings_count: usize,
     pub detected_indicators: Vec<String>,
@@ -62,6 +63,33 @@ pub fn calculate_entropy(data: &[u8]) -> f64 {
     }
 }
 
+/// Calculate maximum sliding window entropy to detect embedded shellcode or stagers.
+pub fn calculate_windowed_entropy(
+    data: &[u8],
+    window_size: usize,
+    step: usize,
+) -> (f64, Option<usize>) {
+    if data.len() <= window_size || window_size == 0 || step == 0 {
+        return (calculate_entropy(data), None);
+    }
+
+    let mut max_entropy = 0.0f64;
+    let mut best_offset = None;
+    let mut offset = 0;
+
+    while offset + window_size <= data.len() {
+        let chunk = &data[offset..offset + window_size];
+        let ent = calculate_entropy(chunk);
+        if ent > max_entropy {
+            max_entropy = ent;
+            best_offset = Some(offset);
+        }
+        offset += step;
+    }
+
+    (max_entropy, best_offset)
+}
+
 /// Extract printable ASCII strings (byte range 32..=126) of minimum length.
 pub fn extract_strings(data: &[u8], min_length: usize) -> Vec<String> {
     let mut strings = Vec::new();
@@ -92,17 +120,26 @@ pub fn extract_strings(data: &[u8], min_length: usize) -> Vec<String> {
 /// Analyze raw byte payload against heuristics, indicators of compromise, and entropy thresholds.
 pub fn analyze_payload(data: &[u8]) -> ThreatReport {
     let entropy = calculate_entropy(data);
+    let (max_windowed_entropy, window_offset) = calculate_windowed_entropy(data, 256, 64);
     let strings = extract_strings(data, 4);
 
-    let entropy_risk = if entropy >= 7.2 {
-        "High (Packed, Encrypted, or Shellcode)".to_string()
-    } else if entropy >= 6.0 {
-        "Elevated (Compressed or Obfuscated)".to_string()
+    let entropy_risk = if entropy >= 7.2 || max_windowed_entropy >= 7.4 {
+        "High (Packed, Encrypted, or Localized Shellcode Block)".to_string()
+    } else if entropy >= 6.0 || max_windowed_entropy >= 6.8 {
+        "Elevated (Compressed, Obfuscated, or Local Variance)".to_string()
     } else {
         "Normal (Plaintext or Structured Code)".to_string()
     };
 
     let mut indicators = Vec::new();
+    if max_windowed_entropy >= 7.4 && entropy < 7.0 {
+        if let Some(off) = window_offset {
+            indicators.push(format!(
+                "Localized high entropy stager detected at offset 0x{:X} (window entropy: {:.2})",
+                off, max_windowed_entropy
+            ));
+        }
+    }
     let joined_strings = strings.join(" \n ");
 
     // Suspicious pattern matching
@@ -185,6 +222,7 @@ pub fn analyze_payload(data: &[u8]) -> ThreatReport {
     ThreatReport {
         sample_size_bytes: data.len(),
         entropy,
+        max_windowed_entropy,
         entropy_risk,
         extracted_strings_count: strings.len(),
         detected_indicators: indicators,
@@ -222,6 +260,11 @@ pub fn print_report(report: &ThreatReport, filename: Option<&str>) {
         "Shannon Entropy".bold(),
         report.entropy,
         report.entropy_risk
+    );
+    println!(
+        "{:<24}: {:.4} bits/byte",
+        "Max Windowed Entropy".bold(),
+        report.max_windowed_entropy
     );
     println!(
         "{:<24}: {}",
@@ -512,5 +555,21 @@ mod tests {
         let _ = std::fs::remove_file(file1);
         let _ = std::fs::remove_file(file2);
         let _ = std::fs::remove_dir(temp_dir);
+    }
+
+    #[test]
+    fn test_calculate_windowed_entropy_embedded_chunk() {
+        let mut buffer = vec![b'A'; 5000];
+        // Offset 2048 is aligned with step size 64 (32 * 64 = 2048)
+        for i in 0..256 {
+            buffer[2048 + i] = i as u8;
+        }
+
+        let overall_entropy = calculate_entropy(&buffer);
+        assert!(overall_entropy < 1.5);
+
+        let (max_ent, best_off) = calculate_windowed_entropy(&buffer, 256, 64);
+        assert!(max_ent >= 7.5);
+        assert_eq!(best_off, Some(2048));
     }
 }

@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use std::process::Stdio;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::process::Command;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct McpConfigFile {
@@ -110,6 +113,150 @@ pub fn inspect_mcp_json_rpc(payload: &str) -> Result<(), Box<VulnerabilityFindin
                         "Enforce workspace boundary sandbox; restrict host credential file reads."
                             .to_string(),
                 }));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Transform incoming JSON-RPC line from client, intercepting and blocking hostile tool invocations
+pub fn process_client_mcp_line(
+    line: &str,
+    sanitize: bool,
+) -> Result<String, (serde_json::Value, Box<VulnerabilityFinding>)> {
+    match inspect_mcp_json_rpc(line) {
+        Ok(()) => {
+            if sanitize {
+                let (sanitized, _) = sast::sanitize_secrets(line);
+                Ok(sanitized)
+            } else {
+                Ok(line.to_string())
+            }
+        }
+        Err(finding) => {
+            let req_id = serde_json::from_str::<serde_json::Value>(line)
+                .ok()
+                .and_then(|v| v.get("id").cloned())
+                .unwrap_or(serde_json::Value::Null);
+
+            let err_resp = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "error": {
+                    "code": -32000,
+                    "message": format!(
+                        "Nether Ward Sentinel: Tool invocation blocked by perimeter firewall. Rule: {} [{}]",
+                        finding.title, finding.rule_id
+                    ),
+                    "data": {
+                        "rule_id": finding.rule_id,
+                        "category": finding.category.to_string(),
+                        "severity": finding.severity.to_string(),
+                        "recommendation": finding.recommendation
+                    }
+                }
+            });
+
+            Err((err_resp, finding))
+        }
+    }
+}
+
+/// Transform outgoing JSON-RPC line from server to client, redacting secrets in-flight
+pub fn process_server_mcp_line(line: &str, sanitize: bool) -> String {
+    if sanitize {
+        let (sanitized, _) = sast::sanitize_secrets(line);
+        sanitized
+    } else {
+        line.to_string()
+    }
+}
+
+/// Run bidirectional stdio proxy between coding agent and underlying MCP server
+pub async fn run_mcp_proxy(
+    cmd: &str,
+    args: &[String],
+    sanitize: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    eprintln!(
+        "{} Initializing stdio proxy for target '{}' (Sanitization: {})",
+        "NETHER WARD MCP PROXY:".cyan().bold(),
+        cmd,
+        if sanitize {
+            "Active".green()
+        } else {
+            "Disabled".yellow()
+        }
+    );
+
+    let mut child = Command::new(cmd)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()?;
+
+    let mut child_stdin = child.stdin.take().expect("Child stdin unavailable");
+    let child_stdout = child.stdout.take().expect("Child stdout unavailable");
+
+    // Task 1: Stdin from parent process (agent) -> inspect / sanitize -> child stdin
+    let stdin_task = tokio::spawn(async move {
+        let stdin = tokio::io::stdin();
+        let mut reader = BufReader::new(stdin).lines();
+
+        while let Ok(Some(line)) = reader.next_line().await {
+            let line_trimmed = line.trim();
+            if line_trimmed.is_empty() {
+                continue;
+            }
+
+            match process_client_mcp_line(line_trimmed, sanitize) {
+                Ok(forward_line) => {
+                    if let Err(e) = child_stdin
+                        .write_all(format!("{forward_line}\n").as_bytes())
+                        .await
+                    {
+                        eprintln!("Nether Ward MCP Proxy: Target stdin closed: {e}");
+                        break;
+                    }
+                    let _ = child_stdin.flush().await;
+                }
+                Err((err_resp, finding)) => {
+                    eprintln!(
+                        "{} Blocked hostile MCP tool invocation: {} [{}]",
+                        "NETHER WARD MCP PROXY:".red().bold(),
+                        finding.title,
+                        finding.rule_id
+                    );
+                    let mut stdout = tokio::io::stdout();
+                    let _ = stdout.write_all(format!("{}\n", err_resp).as_bytes()).await;
+                    let _ = stdout.flush().await;
+                }
+            }
+        }
+    });
+
+    // Task 2: Child stdout -> sanitize secrets -> parent stdout
+    let stdout_task = tokio::spawn(async move {
+        let mut reader = BufReader::new(child_stdout).lines();
+        let mut stdout = tokio::io::stdout();
+
+        while let Ok(Some(line)) = reader.next_line().await {
+            let out_line = process_server_mcp_line(&line, sanitize);
+            if let Err(e) = stdout.write_all(format!("{out_line}\n").as_bytes()).await {
+                eprintln!("Nether Ward MCP Proxy: Client stdout closed: {e}");
+                break;
+            }
+            let _ = stdout.flush().await;
+        }
+    });
+
+    let (res, _, _) = tokio::join!(child.wait(), stdin_task, stdout_task);
+    if let Ok(status) = res {
+        if let Some(code) = status.code() {
+            if code != 0 {
+                std::process::exit(code);
             }
         }
     }
@@ -256,5 +403,37 @@ mod tests {
         assert!(report.findings.iter().any(|f| f.rule_id == "NW-MCP-001"));
         assert!(report.findings.iter().any(|f| f.rule_id == "NW-SEC-001"));
         let _ = fs::remove_file(temp_path);
+    }
+
+    #[test]
+    fn test_process_client_mcp_line_clean_forwarding() {
+        let line = r#"{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"read_file","arguments":{"Path":"/home/user/file.txt"}}}"#;
+        let res = process_client_mcp_line(line, false);
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap(), line);
+    }
+
+    #[test]
+    fn test_process_client_mcp_line_blocked_error_injection() {
+        let line = r#"{"jsonrpc":"2.0","id":99,"method":"tools/call","params":{"name":"run_command","arguments":{"CommandLine":"rm -rf /"}}}"#;
+        let res = process_client_mcp_line(line, false);
+        assert!(res.is_err());
+        let (err_json, finding) = res.unwrap_err();
+        assert_eq!(err_json["jsonrpc"], "2.0");
+        assert_eq!(err_json["id"], 99);
+        assert_eq!(err_json["error"]["code"], -32000);
+        assert!(err_json["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("Nether Ward Sentinel"));
+        assert_eq!(finding.category, RuleCategory::SystemExecution);
+    }
+
+    #[test]
+    fn test_process_server_mcp_line_secret_redaction() {
+        let line = r#"{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"AWS_KEY=AKIAIOSFODNN7EXAMPLE"}]}}"#;
+        let sanitized = process_server_mcp_line(line, true);
+        assert!(!sanitized.contains("AKIAIOSFODNN7EXAMPLE"));
+        assert!(sanitized.contains("AKIA***REDACTED***MPLE"));
     }
 }

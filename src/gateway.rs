@@ -1,14 +1,36 @@
 use axum::{
     extract::State,
     http::StatusCode,
-    response::{IntoResponse, Json},
+    response::{IntoResponse, Json, Response},
     routing::{get, post},
     Router,
 };
 use colored::*;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
+
+#[derive(Debug)]
+pub struct GatewayMetrics {
+    pub start_time: chrono::DateTime<chrono::Utc>,
+    pub total_requests: AtomicU64,
+    pub blocked_requests: AtomicU64,
+    pub sanitized_secrets: AtomicU64,
+    pub completed_requests: AtomicU64,
+}
+
+impl Default for GatewayMetrics {
+    fn default() -> Self {
+        Self {
+            start_time: chrono::Utc::now(),
+            total_requests: AtomicU64::new(0),
+            blocked_requests: AtomicU64::new(0),
+            sanitized_secrets: AtomicU64::new(0),
+            completed_requests: AtomicU64::new(0),
+        }
+    }
+}
 
 #[derive(Clone)]
 #[allow(dead_code)]
@@ -19,6 +41,7 @@ pub struct GatewayState {
     pub port: u16,
     pub sanitize: bool,
     pub client: reqwest::Client,
+    pub metrics: Arc<GatewayMetrics>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -31,6 +54,8 @@ pub struct ChatCompletionRequest {
     pub tool_choice: Option<serde_json::Value>,
     pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
+    #[serde(default)]
+    pub stream: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
@@ -224,6 +249,8 @@ pub fn create_router(state: Arc<GatewayState>) -> Router {
         .route("/", get(health_check))
         .route("/v1/chat/completions", post(chat_completions))
         .route("/v1/models", get(list_models))
+        .route("/v1/stats", get(gateway_stats))
+        .route("/metrics", get(prometheus_metrics))
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
@@ -254,6 +281,7 @@ pub async fn run_gateway(
         port,
         sanitize,
         client: reqwest::Client::new(),
+        metrics: Arc::new(GatewayMetrics::default()),
     });
 
     let app = create_router(state);
@@ -332,17 +360,72 @@ async fn list_models(State(state): State<Arc<GatewayState>>) -> impl IntoRespons
     }))
 }
 
+async fn gateway_stats(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
+    let now = chrono::Utc::now();
+    let uptime = (now - state.metrics.start_time).num_seconds().max(0);
+    Json(serde_json::json!({
+        "service": "nether-ward-gateway",
+        "version": "0.2.0",
+        "uptime_seconds": uptime,
+        "total_requests": state.metrics.total_requests.load(Ordering::Relaxed),
+        "blocked_requests": state.metrics.blocked_requests.load(Ordering::Relaxed),
+        "sanitized_secrets": state.metrics.sanitized_secrets.load(Ordering::Relaxed),
+        "completed_requests": state.metrics.completed_requests.load(Ordering::Relaxed),
+        "active_rules_count": crate::sast::get_default_rules().len()
+    }))
+}
+
+async fn prometheus_metrics(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
+    let total = state.metrics.total_requests.load(Ordering::Relaxed);
+    let blocked = state.metrics.blocked_requests.load(Ordering::Relaxed);
+    let sanitized = state.metrics.sanitized_secrets.load(Ordering::Relaxed);
+    let completed = state.metrics.completed_requests.load(Ordering::Relaxed);
+
+    let output = format!(
+        "# HELP nether_ward_requests_total Total number of chat completion requests received\n\
+         # TYPE nether_ward_requests_total counter\n\
+         nether_ward_requests_total {total}\n\
+         # HELP nether_ward_blocked_total Total number of requests blocked by perimeter firewall\n\
+         # TYPE nether_ward_blocked_total counter\n\
+         nether_ward_blocked_total {blocked}\n\
+         # HELP nether_ward_sanitized_total Total number of secrets sanitized in-flight\n\
+         # TYPE nether_ward_sanitized_total counter\n\
+         nether_ward_sanitized_total {sanitized}\n\
+         # HELP nether_ward_completed_total Total number of requests successfully completed\n\
+         # TYPE nether_ward_completed_total counter\n\
+         nether_ward_completed_total {completed}\n"
+    );
+
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4",
+        )],
+        output,
+    )
+}
+
 async fn chat_completions(
     State(state): State<Arc<GatewayState>>,
     Json(mut req): Json<ChatCompletionRequest>,
-) -> Result<Json<ChatCompletionResponse>, (StatusCode, Json<serde_json::Value>)> {
+) -> Response {
+    state.metrics.total_requests.fetch_add(1, Ordering::Relaxed);
+
     // 1. Inspect incoming request via Nether Ward Sentinel Firewall and sanitize if enabled
-    scan_and_sanitize_incoming_request(&mut req, state.sanitize)?;
+    if let Err((status, err_json)) = scan_and_sanitize_incoming_request(&mut req, state.sanitize) {
+        state
+            .metrics
+            .blocked_requests
+            .fetch_add(1, Ordering::Relaxed);
+        return (status, err_json).into_response();
+    }
 
     let target_model = req
         .model
         .clone()
         .unwrap_or_else(|| state.upstream_model.clone());
+
+    let is_streaming = req.stream.unwrap_or(false);
 
     // 2. Route request: Upstream OpenAI-compatible API, Gemini API, or Offline Local Sentinel
     if let Some(ref upstream_base) = state.upstream_url {
@@ -357,44 +440,90 @@ async fn chat_completions(
         let mut forwarded_req = req.clone();
         forwarded_req.model = Some(target_model.clone());
 
-        let resp = state
+        let resp = match state
             .client
             .post(&endpoint)
             .json(&forwarded_req)
             .send()
             .await
-            .map_err(|e| {
-                (
+        {
+            Ok(r) => r,
+            Err(e) => {
+                state
+                    .metrics
+                    .blocked_requests
+                    .fetch_add(1, Ordering::Relaxed);
+                return (
                     StatusCode::BAD_GATEWAY,
                     Json(serde_json::json!({
                         "error": { "message": format!("Upstream call to '{endpoint}' failed: {e}") }
                     })),
                 )
-            })?;
+                    .into_response();
+            }
+        };
 
         if !resp.status().is_success() {
+            state
+                .metrics
+                .blocked_requests
+                .fetch_add(1, Ordering::Relaxed);
             let err_text = resp.text().await.unwrap_or_default();
-            return Err((
+            return (
                 StatusCode::BAD_GATEWAY,
                 Json(serde_json::json!({
                     "error": { "message": format!("Upstream model error: {err_text}") }
                 })),
-            ));
+            )
+                .into_response();
         }
 
-        let mut completion_resp: ChatCompletionResponse = resp.json().await.map_err(|e| {
-            (
-                StatusCode::BAD_GATEWAY,
-                Json(serde_json::json!({
-                    "error": { "message": format!("Failed to parse upstream response JSON: {e}") }
-                })),
-            )
-        })?;
+        if is_streaming {
+            state
+                .metrics
+                .completed_requests
+                .fetch_add(1, Ordering::Relaxed);
+            let text = resp.text().await.unwrap_or_default();
+            return Response::builder()
+                .header(axum::http::header::CONTENT_TYPE, "text/event-stream")
+                .header(axum::http::header::CACHE_CONTROL, "no-cache")
+                .body(axum::body::Body::from(text))
+                .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+        }
+
+        let mut completion_resp: ChatCompletionResponse = match resp.json().await {
+            Ok(c) => c,
+            Err(e) => {
+                state
+                    .metrics
+                    .blocked_requests
+                    .fetch_add(1, Ordering::Relaxed);
+                return (
+                    StatusCode::BAD_GATEWAY,
+                    Json(serde_json::json!({
+                        "error": { "message": format!("Failed to parse upstream response JSON: {e}") }
+                    })),
+                )
+                    .into_response();
+            }
+        };
 
         // Inspect outgoing response from upstream before releasing to client
-        scan_and_sanitize_outgoing_response(&mut completion_resp, state.sanitize)?;
+        if let Err((status, err_json)) =
+            scan_and_sanitize_outgoing_response(&mut completion_resp, state.sanitize)
+        {
+            state
+                .metrics
+                .blocked_requests
+                .fetch_add(1, Ordering::Relaxed);
+            return (status, err_json).into_response();
+        }
 
-        Ok(Json(completion_resp))
+        state
+            .metrics
+            .completed_requests
+            .fetch_add(1, Ordering::Relaxed);
+        Json(completion_resp).into_response()
     } else if !state.api_key.is_empty() {
         let mut contents = Vec::new();
         let mut system_instruction = None;
@@ -435,29 +564,36 @@ async fn chat_completions(
             target_model, state.api_key
         );
 
-        let resp = state
-            .client
-            .post(&url)
-            .json(&gemini_payload)
-            .send()
-            .await
-            .map_err(|e| {
-                (
+        let resp = match state.client.post(&url).json(&gemini_payload).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                state
+                    .metrics
+                    .blocked_requests
+                    .fetch_add(1, Ordering::Relaxed);
+                return (
                     StatusCode::BAD_GATEWAY,
                     Json(serde_json::json!({
                         "error": { "message": format!("Upstream Gemini API call failed: {e}") }
                     })),
                 )
-            })?;
+                    .into_response();
+            }
+        };
 
         if !resp.status().is_success() {
+            state
+                .metrics
+                .blocked_requests
+                .fetch_add(1, Ordering::Relaxed);
             let err_text = resp.text().await.unwrap_or_default();
-            return Err((
+            return (
                 StatusCode::BAD_GATEWAY,
                 Json(serde_json::json!({
                     "error": { "message": format!("Upstream Gemini error: {err_text}") }
                 })),
-            ));
+            )
+                .into_response();
         }
 
         let gemini_json: serde_json::Value = resp.json().await.unwrap_or_default();
@@ -465,6 +601,31 @@ async fn chat_completions(
             .as_str()
             .unwrap_or("")
             .to_string();
+
+        if is_streaming {
+            state
+                .metrics
+                .completed_requests
+                .fetch_add(1, Ordering::Relaxed);
+            let sse_data = format!(
+                "data: {{\"id\":\"chatcmpl-{}\",\"object\":\"chat.completion.chunk\",\"created\":{},\"model\":\"{}\",\"choices\":[{{\"index\":0,\"delta\":{{\"role\":\"assistant\",\"content\":{}}},\"finish_reason\":null}}]}}\n\n\
+                 data: {{\"id\":\"chatcmpl-{}\",\"object\":\"chat.completion.chunk\",\"created\":{},\"model\":\"{}\",\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"stop\"}}]}}\n\n\
+                 data: [DONE]\n\n",
+                chrono::Utc::now().timestamp_millis(),
+                chrono::Utc::now().timestamp(),
+                target_model,
+                serde_json::to_string(&reply_text).unwrap_or_default(),
+                chrono::Utc::now().timestamp_millis(),
+                chrono::Utc::now().timestamp(),
+                target_model
+            );
+
+            return Response::builder()
+                .header(axum::http::header::CONTENT_TYPE, "text/event-stream")
+                .header(axum::http::header::CACHE_CONTROL, "no-cache")
+                .body(axum::body::Body::from(sse_data))
+                .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+        }
 
         let mut response = ChatCompletionResponse {
             id: format!("chatcmpl-{}", chrono::Utc::now().timestamp_millis()),
@@ -485,11 +646,52 @@ async fn chat_completions(
         };
 
         // Inspect outgoing response before releasing to client
-        scan_and_sanitize_outgoing_response(&mut response, state.sanitize)?;
+        if let Err((status, err_json)) =
+            scan_and_sanitize_outgoing_response(&mut response, state.sanitize)
+        {
+            state
+                .metrics
+                .blocked_requests
+                .fetch_add(1, Ordering::Relaxed);
+            return (status, err_json).into_response();
+        }
 
-        Ok(Json(response))
+        state
+            .metrics
+            .completed_requests
+            .fetch_add(1, Ordering::Relaxed);
+        Json(response).into_response()
     } else {
         // Offline Local Sentinel Mode
+        let reply_text =
+            "Nether Ward Sentinel: Local offline evaluation gateway active. Security inspection verified clean payload."
+                .to_string();
+
+        if is_streaming {
+            state
+                .metrics
+                .completed_requests
+                .fetch_add(1, Ordering::Relaxed);
+            let sse_data = format!(
+                "data: {{\"id\":\"chatcmpl-local-{}\",\"object\":\"chat.completion.chunk\",\"created\":{},\"model\":\"{}\",\"choices\":[{{\"index\":0,\"delta\":{{\"role\":\"assistant\",\"content\":{}}},\"finish_reason\":null}}]}}\n\n\
+                 data: {{\"id\":\"chatcmpl-local-{}\",\"object\":\"chat.completion.chunk\",\"created\":{},\"model\":\"{}\",\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"stop\"}}]}}\n\n\
+                 data: [DONE]\n\n",
+                chrono::Utc::now().timestamp_millis(),
+                chrono::Utc::now().timestamp(),
+                target_model,
+                serde_json::to_string(&reply_text).unwrap_or_default(),
+                chrono::Utc::now().timestamp_millis(),
+                chrono::Utc::now().timestamp(),
+                target_model
+            );
+
+            return Response::builder()
+                .header(axum::http::header::CONTENT_TYPE, "text/event-stream")
+                .header(axum::http::header::CACHE_CONTROL, "no-cache")
+                .body(axum::body::Body::from(sse_data))
+                .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+        }
+
         let mut response = ChatCompletionResponse {
             id: format!("chatcmpl-local-{}", chrono::Utc::now().timestamp_millis()),
             object: "chat.completion".to_string(),
@@ -499,10 +701,7 @@ async fn chat_completions(
                 index: 0,
                 message: ChatMessage {
                     role: "assistant".to_string(),
-                    content: Some(
-                        "Nether Ward Sentinel: Local offline evaluation gateway active. Security inspection verified clean payload."
-                            .to_string(),
-                    ),
+                    content: Some(reply_text),
                     name: None,
                     tool_calls: None,
                     tool_call_id: None,
@@ -511,9 +710,21 @@ async fn chat_completions(
             }],
         };
 
-        scan_and_sanitize_outgoing_response(&mut response, state.sanitize)?;
+        if let Err((status, err_json)) =
+            scan_and_sanitize_outgoing_response(&mut response, state.sanitize)
+        {
+            state
+                .metrics
+                .blocked_requests
+                .fetch_add(1, Ordering::Relaxed);
+            return (status, err_json).into_response();
+        }
 
-        Ok(Json(response))
+        state
+            .metrics
+            .completed_requests
+            .fetch_add(1, Ordering::Relaxed);
+        Json(response).into_response()
     }
 }
 
@@ -586,6 +797,7 @@ mod tests {
             tool_choice: None,
             temperature: None,
             max_tokens: None,
+            stream: None,
         };
 
         // When sanitize is enabled, secret is masked and request passes inspection
@@ -610,6 +822,7 @@ mod tests {
             tool_choice: None,
             temperature: None,
             max_tokens: None,
+            stream: None,
         };
         let res_strict = scan_and_sanitize_incoming_request(&mut req_strict, false);
         assert!(res_strict.is_err());
@@ -632,9 +845,18 @@ mod tests {
             tool_choice: None,
             temperature: None,
             max_tokens: None,
+            stream: None,
         };
 
         let res = scan_and_sanitize_incoming_request(&mut req, true);
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_gateway_metrics_default() {
+        let metrics = GatewayMetrics::default();
+        assert_eq!(metrics.total_requests.load(Ordering::Relaxed), 0);
+        metrics.total_requests.fetch_add(1, Ordering::Relaxed);
+        assert_eq!(metrics.total_requests.load(Ordering::Relaxed), 1);
     }
 }

@@ -8,13 +8,15 @@ Named after Pugna's Nether Ward in Dota 2: an in-game ward that monitors its are
 
 ## Capabilities
 
+- **Active Stdio MCP Security Proxy (`nether-ward mcp --proxy [--sanitize] -- <cmd>`)**: Intercepts line-delimited JSON-RPC messages between coding agents (Antigravity, Claude Code, Cursor) and local MCP server tools. Blocks hostile commands (`rm -rf /`, reverse shells) with structured JSON-RPC 2.0 error responses without terminating the server session, and redacts exposed credentials in-flight.
+- **MCP Configuration Security Auditor (`nether-ward mcp --config <path>`)**: Audits `.agents/mcp_config.json` for shell-wrapping antipatterns (`bash -c`, `sh`), injected arguments, and exposed environment credentials.
 - **Static Analysis (SAST) Engine (`nether-ward threat --sast <dir>`)**: Scans source code, agent tools, and configurations for exposed API secrets, dynamic code evaluation (`eval`, `exec`), shell invocations (`os.system`, `subprocess(shell=True)`), pickle deserialization payloads (`__reduce__`), and SQL injection patterns.
-- **Shannon Entropy Triage (`nether-ward threat --dir <dir>`)**: Computes byte-level information entropy ($H = -\sum p \log_2 p$) in bits per byte $[0.0, 8.0]$ to identify packed binaries and obfuscated payloads.
-- **Synthetic Red Teaming (`nether-ward redteam`)**: Executes parallel asynchronous probes (`tokio::sync::Semaphore`) evaluating target models against the OWASP Top 10 for Large Language Models.
+- **Sliding-Window & Shannon Entropy Triage (`nether-ward threat --dir <dir>`)**: Computes byte-level information entropy ($H = -\sum p \log_2 p$) and localized sliding-window entropy across chunks to identify packed binaries, obfuscated payloads, and embedded shellcode stagers.
+- **Synthetic Red Teaming (`nether-ward redteam`)**: Executes parallel asynchronous probes (`tokio::sync::Semaphore`) evaluating target models against the OWASP Top 10 for Large Language Models. Supports deterministic substring matching, regex assertions (`regex`, `not-regex`), tool misuse assertions (`tool-not-called`), and SAST cleanliness assertions (`sast-clean`).
 - **Dual Model Runtime Support (`--endpoint`)**: Evaluates remote cloud APIs (Google Gemini) or local OpenAI-compatible endpoints (`/v1/chat/completions`) such as Ollama, llama.cpp, or Nether Ward's internal gateway.
 - **TypeSafe AI (Jev System One) Semantic Judge**: Evaluates condition probabilities (`noul`) and risk scores (`score`) via TypeSafe Jev System One to verify model refusal and compliance without brittle substring regexes.
-- **AI Security Gateway (`nether-ward gateway`)**: Axum reverse proxy inspecting incoming payloads against threat signatures before forwarding to upstream providers.
-- **CI/CD Integration**: Nix flake packaging, automated RustSec advisory checks, SPDX SBOM generation, and GitHub Pages matrix reporting.
+- **AI Security Gateway (`nether-ward gateway`)**: Axum reverse proxy with runtime tool-call firewall, in-flight secret sanitization (`--sanitize`), Server-Sent Events (`stream: true`), and operational telemetry (`/v1/stats`, `/metrics`).
+- **CI/CD Integration**: Nix flake packaging, automated RustSec advisory checks, OASIS SARIF v2.1.0 export to GitHub Code Scanning, SPDX SBOM generation, and GitHub Pages matrix reporting.
 
 ---
 
@@ -37,16 +39,26 @@ cargo build --release
 ./target/release/nether-ward threat --sample datasets/threat_samples/obfuscated_high_entropy.bin
 ./target/release/nether-ward threat --dir datasets/threat_samples
 
-# 6. Start the native AI security gateway reverse proxy (port 4000)
-./target/release/nether-ward gateway --port 4000
+# 6. Audit MCP configuration files (.agents/mcp_config.json)
+./target/release/nether-ward mcp --config /home/damathryxx64/repositories/.agents/mcp_config.json
 
-# 7. Run synthetic red team evaluation against local endpoint
+# 7. Run transparent stdio MCP security proxy wrapping a target server
+./target/release/nether-ward mcp --proxy --sanitize -- mcp-server-git --repo /home/damathryxx64/repositories
+
+# 8. Start the native AI security gateway reverse proxy with secret sanitization (port 4000)
+./target/release/nether-ward gateway --port 4000 --sanitize
+
+# 9. Query gateway operational metrics and Prometheus telemetry
+curl http://localhost:4000/v1/stats
+curl http://localhost:4000/metrics
+
+# 10. Run synthetic red team evaluation against local endpoint
 ./target/release/nether-ward redteam --dataset datasets/owasp_top10_expanded.jsonl --endpoint http://localhost:4000/v1/chat/completions --concurrency 5
 
-# 8. Run synthetic red team evaluation against Gemini with Jev semantic judge
+# 11. Run synthetic red team evaluation against Gemini with Jev semantic judge
 ./target/release/nether-ward redteam --dataset datasets/owasp_top10_expanded.jsonl --concurrency 8
 
-# 9. Verify local inference engine connectivity (Ollama)
+# 12. Verify local inference engine connectivity (Ollama)
 ./target/release/nether-ward inference
 ```
 
@@ -64,11 +76,12 @@ For the technical problem statement, 5-layer threat model, and architectural blu
 | `values.json` | Declarative hub for ports, endpoints, model routes, and timeouts. |
 | `src/main.rs` | CLI entrypoint orchestrating subcommands. |
 | `src/sast.rs` | Static analysis rule engine, token redaction, and directory auditing. |
-| `src/threat.rs` | Shannon entropy profiling, printable string extraction, and payload triage. |
+| `src/threat.rs` | Shannon and windowed entropy profiling, string extraction, and triage. |
 | `src/jev.rs` | TypeSafe AI System One HTTP client for calibrated semantic judgments. |
-| `src/redteam.rs` | Bounded parallel red team runner, JUnit XML generator, and HTML dashboard compiler. |
-| `src/gateway.rs` | Axum reverse proxy with built-in threat firewall inspection. |
-| `datasets/` | Synthetic test suites: `owasp_top10_expanded.jsonl` and `threat_samples/`. |
+| `src/mcp.rs` | Model Context Protocol configuration auditor and bidirectional stdio security proxy. |
+| `src/redteam.rs` | Multi-turn red team runner, regex/SAST assertions, JUnit XML, and HTML matrix. |
+| `src/gateway.rs` | Axum reverse proxy with tool-call firewall, secret sanitization, SSE streaming, and metrics. |
+| `datasets/` | Synthetic test suites: `owasp_top10_expanded.jsonl`, `threat_samples/`, and `trajectories/`. |
 | `.github/workflows/` | GitHub Actions pipelines: CodeQL, RustSec audit, JUnit checks, and Pages deployment. |
 
 ---

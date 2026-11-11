@@ -72,7 +72,7 @@ enum Commands {
         sanitize: bool,
     },
 
-    /// Audit Model Context Protocol (MCP) server configurations and inspect JSON-RPC messages
+    /// Audit Model Context Protocol (MCP) servers or run bidirectional stdio security proxy
     Mcp {
         /// Path to MCP configuration file (e.g. .agents/mcp_config.json)
         #[arg(short, long)]
@@ -81,6 +81,18 @@ enum Commands {
         /// JSON-RPC message payload string to inspect
         #[arg(short, long)]
         inspect: Option<String>,
+
+        /// Enable in-flight secret sanitization and masking
+        #[arg(long)]
+        sanitize: bool,
+
+        /// Run transparent bidirectional stdio security proxy wrapping target command
+        #[arg(long)]
+        proxy: bool,
+
+        /// Target command and arguments for proxy execution
+        #[arg(last = true)]
+        target_command: Vec<String>,
 
         /// Output results as JSON
         #[arg(long)]
@@ -274,9 +286,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Mcp {
             config,
             inspect,
+            sanitize,
+            proxy,
+            target_command,
             json,
         } => {
-            if let Some(config_path) = config {
+            if proxy {
+                if target_command.is_empty() {
+                    eprintln!(
+                        "{}: Proxy mode requires a target command. Syntax: nether-ward mcp --proxy [--sanitize] -- <command> [args...]",
+                        "Error".red().bold()
+                    );
+                    std::process::exit(1);
+                }
+                let cmd = &target_command[0];
+                let args = &target_command[1..];
+                mcp::run_mcp_proxy(cmd, args, sanitize).await?;
+            } else if let Some(config_path) = config {
                 if !config_path.exists() {
                     eprintln!(
                         "{}: Configuration file '{}' does not exist.",
