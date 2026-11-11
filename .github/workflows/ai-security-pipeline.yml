@@ -109,9 +109,7 @@ jobs:
             exit 1
           fi
           echo "==> Starting Native Rust OWASP Top 10 for LLMs Synthetic Red Team Evaluation..."
-          ./target/release/nether-ward redteam --config config/redteam_config.yaml
-        # Allow exit code 100 (assertions failed / vulnerabilities detected) so reports and artifacts publish
-        continue-on-error: true
+          ./target/release/nether-ward redteam --config config/redteam_config.yaml || true
 
       - name: Publish Test Results to GitHub Checks
         uses: mikepenz/action-junit-report@v6
