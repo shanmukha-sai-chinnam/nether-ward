@@ -1,22 +1,20 @@
 # Nether Ward
 
-Autonomous AI Security Sentinel & Adversarial Verification Platform in Pure Rust and Declarative Nix.
+Static application security testing (SAST) and synthetic red team evaluation harness in Rust and Nix.
 
-Zero Python. Zero Node. Zero Shell Scripts. Pure Compiled Rust & Declarative Nix.
-
-Named after Pugna's Nether Ward in Dota 2: an automated sentinel that surveils the perimeter and instantly strikes hostile entities the moment an exploit is cast.
+Named after Pugna's Nether Ward in Dota 2: an in-game ward that monitors its area and strikes enemy heroes when they cast abilities.
 
 ---
 
 ## Capabilities
 
-- **Multi-Vector SAST Engine (`nether-ward threat --sast <dir>`)**: Static analysis scanning source code, agent tools, and configurations for exposed API secrets, dangerous dynamic code evaluation (`eval`, `exec`), unsafe shell processes (`os.system`, `subprocess(shell=True)`), pickle deserialization RCE (`__reduce__`), and SQL injection patterns.
-- **Shannon Entropy Triage (`nether-ward threat --dir <dir>`)**: Computes byte-level information entropy ($H = -\sum p \log_2 p$) in bits per byte $[0.0, 8.0]$. Flags packed binaries, encrypted stagers, and obfuscated shellcode.
-- **Synthetic Red Teaming (`nether-ward redteam`)**: Parallel asynchronous probe execution (`tokio::sync::Semaphore`) evaluating target models against the OWASP Top 10 for Large Language Models.
-- **Dual Model Runtime Support (`--endpoint`)**: Evaluates either remote cloud APIs (Google Gemini) or offline local OpenAI-compatible endpoints (`/v1/chat/completions`) such as Ollama, llama.cpp, or Nether Ward's internal gateway.
-- **TypeSafe AI (Jev System One) Semantic Judge**: Employs Jev System One calibrated probabilistic condition evaluation (`noul`) and risk scoring (`score`) to verify safety adherence without brittle regex assertions.
-- **AI Security Gateway (`nether-ward gateway`)**: Axum-based reverse proxy enforcing active payload inspection firewalls before routing requests to upstream model providers.
-- **Declarative Nix & CI/CD Sentinel**: Hermetic builds via Nix Flakes, automated RustSec advisory checks, SPDX SBOM generation, and GitHub Pages matrix reporting.
+- **Static Analysis (SAST) Engine (`nether-ward threat --sast <dir>`)**: Scans source code, agent tools, and configurations for exposed API secrets, dynamic code evaluation (`eval`, `exec`), shell invocations (`os.system`, `subprocess(shell=True)`), pickle deserialization payloads (`__reduce__`), and SQL injection patterns.
+- **Shannon Entropy Triage (`nether-ward threat --dir <dir>`)**: Computes byte-level information entropy ($H = -\sum p \log_2 p$) in bits per byte $[0.0, 8.0]$ to identify packed binaries and obfuscated payloads.
+- **Synthetic Red Teaming (`nether-ward redteam`)**: Executes parallel asynchronous probes (`tokio::sync::Semaphore`) evaluating target models against the OWASP Top 10 for Large Language Models.
+- **Dual Model Runtime Support (`--endpoint`)**: Evaluates remote cloud APIs (Google Gemini) or local OpenAI-compatible endpoints (`/v1/chat/completions`) such as Ollama, llama.cpp, or Nether Ward's internal gateway.
+- **TypeSafe AI (Jev System One) Semantic Judge**: Evaluates condition probabilities (`noul`) and risk scores (`score`) via TypeSafe Jev System One to verify model refusal and compliance without brittle substring regexes.
+- **AI Security Gateway (`nether-ward gateway`)**: Axum reverse proxy inspecting incoming payloads against threat signatures before forwarding to upstream providers.
+- **CI/CD Integration**: Nix flake packaging, automated RustSec advisory checks, SPDX SBOM generation, and GitHub Pages matrix reporting.
 
 ---
 

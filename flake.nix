@@ -1,5 +1,5 @@
 {
-  description = "Nether Ward: Declarative AI Infrastructure Platform & Autonomous Cybersecurity Sentinel in Pure Rust";
+  description = "Nether Ward: Static security scanner and adversarial red team evaluation harness in Rust and Nix";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";

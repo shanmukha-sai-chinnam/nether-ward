@@ -2,7 +2,7 @@
 name = "nether-ward"
 version = "0.2.0"
 edition = "2021"
-description = "Declarative AI Infrastructure Platform & Autonomous Cybersecurity Sentinel in Pure Rust"
+description = "Static security scanner and adversarial red team evaluation harness in Rust and Nix"
 authors = ["shanmukha-sai-chinnam"]
 
 [dependencies]

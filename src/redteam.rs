@@ -894,9 +894,7 @@ pub fn write_html_report(report: &RedTeamSummaryReport, path: &str) -> std::io::
     // Header
     html.push_str("<div class=\"header\">\n");
     html.push_str("  <div class=\"header-brand\">\n");
-    html.push_str(
-        "    <div class=\"badge-sentinel\">Nether Ward Sentinel v0.2.0 • Pure Rust & Nix</div>\n",
-    );
+    html.push_str("    <div class=\"badge-sentinel\">Nether Ward v0.2.0 • Rust & Nix</div>\n");
     html.push_str("    <h1 class=\"title\">Synthetic Red Team Security Matrix</h1>\n");
     html.push_str("    <p class=\"subtitle\">Autonomous adversarial evaluation benchmark against OWASP Top 10 for Large Language Models.</p>\n");
     html.push_str("  </div>\n");
@@ -1180,7 +1178,7 @@ pub fn write_html_report(report: &RedTeamSummaryReport, path: &str) -> std::io::
 
     // Footer
     html.push_str("<div class=\"footer\">\n");
-    html.push_str("  Nether Ward • Declarative AI Infrastructure Platform & Autonomous Cybersecurity Sentinel • Pure Rust & NixOS<br>\n");
+    html.push_str("  Nether Ward • Static Security Scanner & Adversarial Red Team Evaluation Harness • Rust & NixOS<br>\n");
     html.push_str("  Hosted via GitHub Pages • Evaluated with Google Gemini Flash Lite\n");
     html.push_str("</div>\n");
 
@@ -1227,7 +1225,7 @@ mod tests {
         assert!(res.is_ok());
 
         let content = fs::read_to_string(&temp_path).unwrap();
-        assert!(content.contains("Nether Ward Sentinel"));
+        assert!(content.contains("Nether Ward"));
         assert!(content.contains("LLM01: Prompt Injection Test"));
         assert!(content.contains("Security Violation Detected:"));
         assert!(content.contains("50%"));

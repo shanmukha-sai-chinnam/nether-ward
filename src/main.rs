@@ -13,7 +13,7 @@ mod threat;
 #[command(name = "nether-ward")]
 #[command(author = "shanmukha-sai-chinnam")]
 #[command(version = "0.2.0")]
-#[command(about = "Declarative AI Infrastructure Platform & Autonomous Cybersecurity Sentinel in Pure Rust", long_about = None)]
+#[command(about = "Static security scanner and adversarial red team evaluation harness in Rust and Nix", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

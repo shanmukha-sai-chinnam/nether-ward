@@ -6,14 +6,14 @@ The evolution of artificial intelligence from conversational chatbots to autonom
 
 Traditional Application Security (AppSec) frameworks—such as Web Application Firewalls (WAFs), static code linters, and network perimeter controls—are architecturally blind to non-deterministic, semantic, and multi-vector threats unique to large language models (LLMs) and agentic workflows. 
 
-**Nether Ward** is an autonomous cybersecurity sentinel and adversarial red-teaming platform engineered from the ground up in **pure native Rust** and **declarative Nix**. It unifies:
-1. **Multi-Vector Static Application Security Testing (SAST)** for agent tools and source code.
-2. **Shannon Entropy and Payload Triage** for runtime binary blobs and stagers.
-3. **High-Throughput Parallel Red-Teaming** benchmarked against the **OWASP Top 10 for LLMs**.
-4. **System One Semantic Evaluation (Jev / TypeSafe AI)** for calibrated probabilistic safety judging.
-5. **Continuous Pipeline Security** with hermetic Nix builds, automated RustSec supply chain audits, SPDX Software Bill of Materials (SBOM), and GitHub Actions integration.
+Nether Ward is a static security scanner and adversarial red team evaluation harness written in Rust and packaged with Nix. It provides:
+1. Static Application Security Testing (SAST) for agent tools, configurations, and source code.
+2. Shannon entropy profiling and byte triage for binary payloads.
+3. Parallel red-teaming benchmarked against the OWASP Top 10 for LLMs.
+4. System One semantic judging (Jev / TypeSafe AI) for probabilistic condition evaluation.
+5. Continuous integration security with Nix builds, RustSec advisory audits, SPDX SBOM generation, and GitHub Actions reporting.
 
-Nether Ward strictly eliminates interpreter-based attack surfaces: **zero Python runtime dependencies, zero Node.js/npm dependencies, and zero shell scripts**. Everything compiles into a single, high-performance static binary with microsecond execution latency.
+The tool compiles to a single static binary without external interpreter dependencies.
 
 ---
 
