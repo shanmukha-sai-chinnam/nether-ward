@@ -292,6 +292,48 @@ pub fn get_default_rules() -> Vec<SastRule> {
             pattern: r#"(?:(?:b64decode|decodebytes)\s*\(\s*['"][A-Za-z0-9+/=]{24,}['"])"#.to_string(),
             recommendation: "Inspect decoded payload; embedded encoded binary or script exceeds security threshold.".to_string(),
         },
+
+        // 7. Next-Gen Autonomous Agent Honeypots, Operational Velocity & Dual-Key Gates
+        SastRule {
+            id: "NW-CANARY-001".to_string(),
+            title: "In-Context Canary Token Compromise Detected".to_string(),
+            category: RuleCategory::SecretLeak,
+            severity: SastSeverity::Critical,
+            pattern: r"(?:AKIA_CANARY_[A-Z0-9]{16}|nw_canary_[a-zA-Z0-9_-]{16,})".to_string(),
+            recommendation: "Halt agent execution immediately. Synthetic decoy credential leaked in prompt, tool call, or outbound traffic.".to_string(),
+        },
+        SastRule {
+            id: "NW-CANARY-002".to_string(),
+            title: "In-Context Honeypot File Access Attempt".to_string(),
+            category: RuleCategory::DangerousCode,
+            severity: SastSeverity::Critical,
+            pattern: r"(?:[./\\]*\.nether_canary[a-zA-Z0-9_.-]*)".to_string(),
+            recommendation: "Block tool execution. Autonomous agent navigated to or attempted access to a designated canary honeypot path.".to_string(),
+        },
+        SastRule {
+            id: "NW-VEL-001".to_string(),
+            title: "Autonomous Agent Operational Velocity Exceeded".to_string(),
+            category: RuleCategory::AgentAgency,
+            severity: SastSeverity::High,
+            pattern: r"(?:\b(?:while\s+true|loop\s*\{|for\s*\(\s*;\s*;\s*\))\s*\{[^}]*(?:curl|fetch|exec|system))".to_string(),
+            recommendation: "Throttle autonomous agent execution. Unbounded execution loops or burst rate limits exceeded.".to_string(),
+        },
+        SastRule {
+            id: "NW-GATE-001".to_string(),
+            title: "Dual-Key Authorization Gate Triggered (Irreversible Operation)".to_string(),
+            category: RuleCategory::SystemExecution,
+            severity: SastSeverity::Critical,
+            pattern: r"(?:rm\s+-(?:rf|fr)\s+[/~]|chmod\s+(?:-R\s+)?(?:777|a\+rwx)|mkfs\.[a-z0-9]+\s+/dev/|dd\s+if=/dev/)".to_string(),
+            recommendation: "Halt execution pending operator verification. Command is classified as irreversible/destructive. Dual-key cryptographic confirmation required.".to_string(),
+        },
+        SastRule {
+            id: "NW-CTX-001".to_string(),
+            title: "Indirect Goal Hijacking via Unquarantined Context".to_string(),
+            category: RuleCategory::AgentAgency,
+            severity: SastSeverity::Critical,
+            pattern: r#"(?:(?i)ignore\s+all\s+(?:previous|prior)\s+instructions|system\s+override\s+code\s*[:=]|<<</NETHER_WARD_QUARANTINE_BOUNDARY>>>)"#.to_string(),
+            recommendation: "Reject payload. External untrusted text contains directive override syntax or quarantine escape attempt.".to_string(),
+        },
     ]
 }
 

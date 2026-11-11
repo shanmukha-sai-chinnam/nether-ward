@@ -3,12 +3,14 @@ use colored::*;
 use std::fs;
 use std::path::PathBuf;
 
+use nether_ward::canary;
 use nether_ward::gateway;
 use nether_ward::mcp;
 use nether_ward::redteam;
 use nether_ward::sandbox;
 use nether_ward::sast;
 use nether_ward::threat;
+use nether_ward::velocity;
 
 #[derive(Parser)]
 #[command(name = "nether-ward")]
@@ -166,6 +168,48 @@ enum Commands {
         /// Command and arguments to execute inside sandbox
         #[arg(last = true, required = true)]
         command: Vec<String>,
+    },
+
+    /// Manage in-context canary tokens, honeypots, and active tripwires
+    Canary {
+        /// Action to perform: 'generate', 'list', or 'scan'
+        #[arg(default_value = "list")]
+        action: String,
+
+        /// Canary type to generate: 'aws', 'api', 'path', 'jwt'
+        #[arg(short = 't', long, default_value = "api")]
+        canary_type: String,
+
+        /// Custom label for generated canary token
+        #[arg(short, long)]
+        label: Option<String>,
+
+        /// Target string or payload to scan for canary leakage
+        #[arg(short, long)]
+        payload: Option<String>,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Evaluate operational velocity limits and dual-key authorization gates
+    Gate {
+        /// Command or tool argument string to evaluate against irreversible operations
+        #[arg(short, long)]
+        command: Option<String>,
+
+        /// Dual-key cryptographic authorization token
+        #[arg(short, long)]
+        token: Option<String>,
+
+        /// Generate an operator dual-key authorization token
+        #[arg(long)]
+        generate_token: bool,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -549,6 +593,149 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     eprintln!("{} Sandbox execution failed: {e}", "Error:".red().bold());
                     std::process::exit(1);
                 }
+            }
+        }
+        Commands::Canary {
+            action,
+            canary_type,
+            label,
+            payload,
+            json,
+        } => {
+            let mut reg = canary::CanaryRegistry::default();
+            match action.as_str() {
+                "generate" => {
+                    let c_type = match canary_type.to_lowercase().as_str() {
+                        "aws" => canary::CanaryType::AwsKey,
+                        "path" => canary::CanaryType::HoneypotPath,
+                        "jwt" => canary::CanaryType::JwtSecret,
+                        _ => canary::CanaryType::ApiKey,
+                    };
+                    let lbl = label
+                        .as_deref()
+                        .unwrap_or("Nether Ward In-Context Tripwire");
+                    let token = reg.generate(c_type, lbl);
+
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&token)?);
+                    } else {
+                        eprintln!(
+                            "{} Generated synthetic canary token:",
+                            "NETHER WARD CANARY:".green().bold()
+                        );
+                        println!("  ID:         {}", token.id);
+                        println!("  Type:       {}", token.token_type);
+                        println!("  Value:      {}", token.value.yellow().bold());
+                        println!("  Label:      {}", token.label);
+                        println!("  Created At: {}", token.created_at);
+                    }
+                }
+                "scan" => {
+                    let target = payload.unwrap_or_default();
+                    let findings = reg.check_leak(&target);
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&findings)?);
+                    } else if findings.is_empty() {
+                        eprintln!(
+                            "{} No canary token compromise or honeypot tripwire detected.",
+                            "CLEAN:".green().bold()
+                        );
+                    } else {
+                        for f in findings {
+                            eprintln!(
+                                "{} [{}] {}",
+                                "CANARY BREACH:".red().bold(),
+                                f.rule_id,
+                                f.title
+                            );
+                            eprintln!("  Snippet:        {}", f.matched_snippet);
+                            eprintln!("  Recommendation: {}", f.recommendation);
+                        }
+                        std::process::exit(1);
+                    }
+                }
+                _ => {
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&reg)?);
+                    } else {
+                        eprintln!(
+                            "{} Active Canary Tokens ({} registered):",
+                            "NETHER WARD CANARY:".cyan().bold(),
+                            reg.tokens.len()
+                        );
+                        for t in &reg.tokens {
+                            println!("  - [{}] {} (ID: {})", t.token_type, t.value.yellow(), t.id);
+                        }
+                        eprintln!(
+                            "\n{} Active Honeypot Decoy Paths ({} registered):",
+                            "NETHER WARD HONEYPOTS:".cyan().bold(),
+                            reg.honeypot_paths.len()
+                        );
+                        for p in &reg.honeypot_paths {
+                            println!("  - {}", p.yellow());
+                        }
+                    }
+                }
+            }
+        }
+        Commands::Gate {
+            command,
+            token,
+            generate_token,
+            json,
+        } => {
+            if generate_token {
+                let tok = velocity::DualKeyGate::generate_gate_token("operator-action");
+                if json {
+                    println!("{}", serde_json::json!({ "token": tok }));
+                } else {
+                    eprintln!(
+                        "{} Ephemeral Dual-Key Authorization Token:",
+                        "NETHER WARD GATE:".green().bold()
+                    );
+                    println!("  Token:   {}", tok.yellow().bold());
+                    println!("  Expires: 15 minutes");
+                }
+                return Ok(());
+            }
+
+            if let Some(cmd) = command {
+                match velocity::DualKeyGate::evaluate_action(&cmd, token.as_deref()) {
+                    Ok(()) => {
+                        if json {
+                            println!(
+                                "{}",
+                                serde_json::json!({ "status": "approved", "command": cmd })
+                            );
+                        } else {
+                            eprintln!(
+                                "{} Command cleared by Dual-Key Gate.",
+                                "GATE APPROVED:".green().bold()
+                            );
+                        }
+                    }
+                    Err(finding) => {
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&finding)?);
+                        } else {
+                            eprintln!(
+                                "{} [{}] {}",
+                                "GATE BLOCKED:".red().bold(),
+                                finding.rule_id,
+                                finding.title
+                            );
+                            eprintln!("  Command:        {}", cmd);
+                            eprintln!("  Recommendation: {}", finding.recommendation);
+                        }
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                eprintln!(
+                    "{}: Specify --command <cmd> to evaluate or --generate-token to issue dual-key token.",
+                    "Error".red().bold()
+                );
+                std::process::exit(1);
             }
         }
     }

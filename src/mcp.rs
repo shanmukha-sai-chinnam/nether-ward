@@ -46,6 +46,8 @@ pub struct ToolCallRecord {
 pub struct McpSessionTracker {
     pub history: Vec<ToolCallRecord>,
     pub max_history: usize,
+    pub canary_registry: crate::canary::CanaryRegistry,
+    pub velocity_limiter: crate::velocity::VelocityLimiter,
 }
 
 impl Default for McpSessionTracker {
@@ -53,6 +55,8 @@ impl Default for McpSessionTracker {
         Self {
             history: Vec::new(),
             max_history: 50,
+            canary_registry: crate::canary::CanaryRegistry::default(),
+            velocity_limiter: crate::velocity::VelocityLimiter::default(),
         }
     }
 }
@@ -62,6 +66,8 @@ impl McpSessionTracker {
         Self {
             history: Vec::new(),
             max_history,
+            canary_registry: crate::canary::CanaryRegistry::default(),
+            velocity_limiter: crate::velocity::VelocityLimiter::default(),
         }
     }
 
@@ -168,6 +174,41 @@ impl McpSessionTracker {
             || args_str.contains("wget ")
             || args_str.contains("fetch(")
             || args_str.contains("requests.post");
+
+        // 1. Operational Velocity Enforcement
+        self.velocity_limiter
+            .record_and_check(crate::velocity::OperationType::ToolExecution, 1)?;
+        if is_write {
+            self.velocity_limiter
+                .record_and_check(crate::velocity::OperationType::FileWrite, 1)?;
+        }
+        if is_network_outbound {
+            self.velocity_limiter
+                .record_and_check(crate::velocity::OperationType::NetworkOutbound, 1)?;
+        }
+        if is_sensitive_read {
+            self.velocity_limiter
+                .record_and_check(crate::velocity::OperationType::SensitiveRead, 1)?;
+        }
+
+        // 2. Dual-Key Authorization Gate (Irreversible Action Check)
+        crate::velocity::DualKeyGate::evaluate_action(&args_str, None)?;
+
+        // 3. In-Context Canary Token Leakage Check
+        let canary_leaks = self.canary_registry.check_leak(&args_str);
+        if let Some(finding) = canary_leaks.into_iter().next() {
+            return Err(Box::new(finding));
+        }
+
+        // 4. Decoy Honeypot Path Interception Check
+        for p in &extracted_paths {
+            if let Some(finding) = self.canary_registry.check_path_access(p) {
+                return Err(Box::new(finding));
+            }
+        }
+
+        // 5. Context Quarantine Breakout Check
+        crate::velocity::ContextQuarantine::check_quarantine_breach(&args_str)?;
 
         // Rule NW-MCP-005: Stateful Drop-and-Execute Chain
         // Attack Pattern: Tool writes a file (e.g. /tmp/stager.sh), and a subsequent tool turn executes it or marks it executable.

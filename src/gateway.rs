@@ -151,6 +151,50 @@ pub fn inspect_text(text: &str) -> Result<(), (StatusCode, Json<serde_json::Valu
         ));
     }
 
+    // 3. Canary Token tripwire check
+    let canary_reg = crate::canary::CanaryRegistry::default();
+    let canary_findings = canary_reg.check_leak(text);
+    if let Some(cf) = canary_findings.into_iter().next() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": {
+                    "message": format!(
+                        "Nether Ward Sentinel: Request blocked by security firewall. Rule violation: {} [{}]",
+                        cf.title, cf.rule_id
+                    ),
+                    "type": "security_policy_violation",
+                    "code": "nether_ward_canary_tripped",
+                    "rule_id": cf.rule_id,
+                    "category": cf.category.to_string(),
+                    "severity": cf.severity.to_string(),
+                    "recommendation": cf.recommendation
+                }
+            })),
+        ));
+    }
+
+    // 4. Context Quarantine breakout check
+    if let Err(qf) = crate::velocity::ContextQuarantine::check_quarantine_breach(text) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": {
+                    "message": format!(
+                        "Nether Ward Sentinel: Request blocked by security firewall. Rule violation: {} [{}]",
+                        qf.title, qf.rule_id
+                    ),
+                    "type": "security_policy_violation",
+                    "code": "nether_ward_quarantine_breach",
+                    "rule_id": qf.rule_id,
+                    "category": qf.category.to_string(),
+                    "severity": qf.severity.to_string(),
+                    "recommendation": qf.recommendation
+                }
+            })),
+        ));
+    }
+
     Ok(())
 }
 

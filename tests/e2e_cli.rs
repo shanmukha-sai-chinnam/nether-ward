@@ -179,3 +179,84 @@ fn test_e2e_cli_sandbox_execution() {
     assert_eq!(parsed["exit_code"], 0);
     assert_eq!(parsed["command"], "echo");
 }
+
+#[test]
+fn test_e2e_cli_canary_generation_and_scan() {
+    let bin = env!("CARGO_BIN_EXE_nether-ward");
+
+    // 1. Generate an AWS canary token
+    let gen_output = Command::new(bin)
+        .args(["canary", "generate", "-t", "aws", "--json"])
+        .output()
+        .expect("Failed to execute nether-ward canary generate");
+
+    assert!(gen_output.status.success());
+    let gen_stdout = String::from_utf8_lossy(&gen_output.stdout);
+    let token_json: serde_json::Value =
+        serde_json::from_str(&gen_stdout).expect("Valid JSON token output");
+    let token_val = token_json["value"].as_str().expect("Token value string");
+    assert!(token_val.starts_with("AKIA_CANARY_"));
+
+    // 2. Scan clean string -> exit 0
+    let clean_scan = Command::new(bin)
+        .args(["canary", "scan", "--payload", "normal system prompt"])
+        .output()
+        .expect("Failed to execute nether-ward canary scan");
+    assert!(clean_scan.status.success());
+
+    // 3. Scan leaked canary token -> exit 1
+    let breach_payload = format!("Leaked token: {}", token_val);
+    let breach_scan = Command::new(bin)
+        .args(["canary", "scan", "--payload", &breach_payload])
+        .output()
+        .expect("Failed to execute nether-ward canary scan");
+    assert!(!breach_scan.status.success());
+}
+
+#[test]
+fn test_e2e_cli_gate_dual_key_authorization() {
+    let bin = env!("CARGO_BIN_EXE_nether-ward");
+
+    // 1. Irreversible action without token -> blocked (exit 1)
+    let block_output = Command::new(bin)
+        .args(["gate", "--command", "rm -rf /opt/data", "--json"])
+        .output()
+        .expect("Failed to execute nether-ward gate");
+    assert!(!block_output.status.success());
+
+    // 2. Generate dual-key token
+    let token_output = Command::new(bin)
+        .args(["gate", "--generate-token", "--json"])
+        .output()
+        .expect("Failed to generate dual key token");
+    assert!(token_output.status.success());
+    let token_stdout = String::from_utf8_lossy(&token_output.stdout);
+    let token_json: serde_json::Value =
+        serde_json::from_str(&token_stdout).expect("Valid token JSON");
+    let token_str = token_json["token"].as_str().expect("Token string");
+
+    // 3. Irreversible action with valid token -> approved (exit 0)
+    let approve_output = Command::new(bin)
+        .args([
+            "gate",
+            "--command",
+            "rm -rf /opt/data",
+            "--token",
+            token_str,
+            "--json",
+        ])
+        .output()
+        .expect("Failed to evaluate gate with token");
+    assert!(approve_output.status.success());
+    let approve_stdout = String::from_utf8_lossy(&approve_output.stdout);
+    let approve_json: serde_json::Value =
+        serde_json::from_str(&approve_stdout).expect("Valid approved JSON");
+    assert_eq!(approve_json["status"], "approved");
+
+    // 4. Benign command -> approved without token
+    let benign_output = Command::new(bin)
+        .args(["gate", "--command", "ls -la /var/log", "--json"])
+        .output()
+        .expect("Failed to evaluate benign gate command");
+    assert!(benign_output.status.success());
+}
