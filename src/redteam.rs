@@ -53,7 +53,7 @@ pub struct Assertion {
     pub value: Option<String>,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct EvaluationResult {
     pub test_name: String,
     pub prompt_name: String,
@@ -64,7 +64,7 @@ pub struct EvaluationResult {
     pub latency_ms: u128,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RedTeamSummaryReport {
     pub timestamp: String,
     pub total_tests: usize,
@@ -505,58 +505,255 @@ fn write_junit_xml(
     fs::write(path, xml)
 }
 
-fn write_html_report(report: &RedTeamSummaryReport, path: &str) -> std::io::Result<()> {
+pub fn render_html_from_json(
+    json_path: &str,
+    output_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let content = fs::read_to_string(json_path)?;
+    let report: RedTeamSummaryReport = serde_json::from_str(&content)?;
+    write_html_report(&report, output_path)?;
+    Ok(())
+}
+
+pub fn write_html_report(report: &RedTeamSummaryReport, path: &str) -> std::io::Result<()> {
     let mut html = String::new();
+    let pass_pct = if report.total_tests > 0 {
+        (report.passed_tests as f64 / report.total_tests as f64 * 100.0).round() as u32
+    } else {
+        0
+    };
+
+    let hardened_count = report
+        .results
+        .iter()
+        .filter(|r| r.prompt_name.contains("hardened"))
+        .count();
+    let unhardened_count = report.total_tests.saturating_sub(hardened_count);
+
     html.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
     html.push_str("<meta charset=\"UTF-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n");
-    html.push_str("<title>Nether Ward - Synthetic AI Red Team Report</title>\n");
+    html.push_str(
+        "<title>Nether Ward — Autonomous AI Security Sentinel & Red Team Dashboard</title>\n",
+    );
+    html.push_str("<link rel=\"preconnect\" href=\"https://fonts.googleapis.com\">\n");
+    html.push_str("<link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin>\n");
+    html.push_str("<link href=\"https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700;800&display=swap\" rel=\"stylesheet\">\n");
     html.push_str("<style>\n");
-    html.push_str("body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #181a1b; color: #e8e6e3; margin: 0; padding: 2rem; }\n");
-    html.push_str(".container { max-width: 1200px; margin: 0 auto; }\n");
-    html.push_str(".card { background: #222426; border-radius: 8px; padding: 1.5rem; margin-bottom: 1.5rem; border: 1px solid #333; }\n");
-    html.push_str("h1, h2 { color: #58a6ff; margin-top: 0; }\n");
-    html.push_str(".stats { display: flex; gap: 1.5rem; margin-bottom: 1.5rem; }\n");
-    html.push_str(".stat-box { flex: 1; background: #1c1e20; padding: 1rem; border-radius: 6px; text-align: center; border: 1px solid #2d3134; }\n");
-    html.push_str(".stat-num { font-size: 2rem; font-weight: bold; }\n");
-    html.push_str(".pass { color: #3fb950; }\n");
-    html.push_str(".fail { color: #f85149; }\n");
-    html.push_str("table { width: 100%; border-collapse: collapse; margin-top: 1rem; }\n");
+    html.push_str(":root {\n");
+    html.push_str("  --bg: #090d16;\n");
+    html.push_str("  --card-bg: #0f172a;\n");
+    html.push_str("  --card-border: #1e293b;\n");
+    html.push_str("  --card-hover: #1e293b80;\n");
+    html.push_str("  --primary: #10b981;\n");
+    html.push_str("  --primary-glow: rgba(16, 185, 129, 0.2);\n");
+    html.push_str("  --accent: #38bdf8;\n");
+    html.push_str("  --danger: #f43f5e;\n");
+    html.push_str("  --danger-glow: rgba(244, 63, 94, 0.2);\n");
+    html.push_str("  --warning: #fbbf24;\n");
+    html.push_str("  --text: #f8fafc;\n");
+    html.push_str("  --text-muted: #94a3b8;\n");
+    html.push_str("  --code-bg: #030712;\n");
+    html.push_str("}\n");
+    html.push_str("* { box-sizing: border-box; }\n");
+    html.push_str("body { font-family: 'Outfit', -apple-system, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 2rem 1.5rem; line-height: 1.6; background-image: radial-gradient(at 0% 0%, rgba(16, 185, 129, 0.08) 0px, transparent 50%), radial-gradient(at 100% 0%, rgba(56, 189, 248, 0.08) 0px, transparent 50%); min-height: 100vh; }\n");
+    html.push_str(".container { max-width: 1360px; margin: 0 auto; }\n");
+    html.push_str(".header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 2rem; flex-wrap: wrap; gap: 1.5rem; }\n");
+    html.push_str(".header-brand { display: flex; flex-direction: column; gap: 0.5rem; }\n");
+    html.push_str(".badge-sentinel { display: inline-flex; align-items: center; gap: 0.5rem; background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.3); color: var(--primary); padding: 4px 12px; border-radius: 9999px; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; width: fit-content; }\n");
+    html.push_str(".title { font-size: 2.2rem; font-weight: 800; margin: 0; background: linear-gradient(135deg, #f8fafc 0%, #cbd5e1 50%, #94a3b8 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; letter-spacing: -0.02em; }\n");
+    html.push_str(".subtitle { color: var(--text-muted); font-size: 1rem; margin: 0; }\n");
     html.push_str(
-        "th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #30363d; }\n",
+        ".toolbar { display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center; }\n",
     );
-    html.push_str("th { background: #1c1e20; color: #8b949e; }\n");
-    html.push_str("tr:hover { background: #26292c; }\n");
-    html.push_str(".badge-pass { background: #238636; color: white; padding: 3px 8px; border-radius: 12px; font-size: 0.8rem; }\n");
-    html.push_str(".badge-fail { background: #da3633; color: white; padding: 3px 8px; border-radius: 12px; font-size: 0.8rem; }\n");
-    html.push_str("pre { background: #161b22; padding: 8px; border-radius: 4px; overflow-x: auto; font-size: 0.85rem; color: #c9d1d9; }\n");
+    html.push_str(".btn { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.55rem 1rem; border-radius: 8px; font-size: 0.85rem; font-weight: 600; text-decoration: none; transition: all 0.2s ease; border: 1px solid transparent; }\n");
+    html.push_str(".btn-xml { background: rgba(16, 185, 129, 0.12); color: #34d399; border-color: rgba(16, 185, 129, 0.3); }\n");
+    html.push_str(".btn-xml:hover { background: rgba(16, 185, 129, 0.22); border-color: #34d399; transform: translateY(-1px); }\n");
+    html.push_str(".btn-json { background: rgba(56, 189, 248, 0.12); color: #38bdf8; border-color: rgba(56, 189, 248, 0.3); }\n");
+    html.push_str(".btn-json:hover { background: rgba(56, 189, 248, 0.22); border-color: #38bdf8; transform: translateY(-1px); }\n");
+    html.push_str(".btn-config { background: rgba(168, 85, 247, 0.12); color: #c084fc; border-color: rgba(168, 85, 247, 0.3); }\n");
+    html.push_str(".btn-config:hover { background: rgba(168, 85, 247, 0.22); border-color: #c084fc; transform: translateY(-1px); }\n");
+    html.push_str(".btn-gh { background: #1e293b; color: #f8fafc; border-color: #334155; }\n");
+    html.push_str(".btn-gh:hover { background: #334155; transform: translateY(-1px); }\n");
+    html.push_str(".stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }\n");
+    html.push_str(".stat-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; padding: 1.25rem 1.5rem; transition: border-color 0.2s ease; }\n");
+    html.push_str(".stat-card:hover { border-color: #334155; }\n");
+    html.push_str(".stat-label { font-size: 0.8rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.35rem; }\n");
+    html.push_str(".stat-val { font-size: 2rem; font-weight: 800; letter-spacing: -0.02em; }\n");
+    html.push_str(
+        ".stat-sub { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem; }\n",
+    );
+    html.push_str(".val-pass { color: var(--primary); }\n");
+    html.push_str(".val-fail { color: var(--danger); }\n");
+    html.push_str(".progress-bar { width: 100%; height: 6px; background: #1e293b; border-radius: 9999px; margin-top: 0.5rem; overflow: hidden; }\n");
+    html.push_str(".progress-fill { height: 100%; background: linear-gradient(90deg, #10b981, #38bdf8); border-radius: 9999px; }\n");
+    html.push_str(".benchmark-banner { background: rgba(15, 23, 42, 0.7); border: 1px solid var(--card-border); border-radius: 10px; padding: 1rem 1.25rem; margin-bottom: 1.5rem; display: flex; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }\n");
+    html.push_str(".benchmark-badge { display: inline-flex; align-items: center; background: rgba(56, 189, 248, 0.12); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); padding: 3px 8px; border-radius: 6px; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }\n");
+    html.push_str(".benchmark-text { font-size: 0.85rem; color: #cbd5e1; margin: 0; flex: 1; min-width: 260px; line-height: 1.5; }\n");
+    html.push_str(".controls-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; gap: 1rem; flex-wrap: wrap; background: var(--card-bg); border: 1px solid var(--card-border); padding: 0.75rem 1rem; border-radius: 10px; }\n");
+    html.push_str(".search-box { flex: 1; min-width: 240px; position: relative; }\n");
+    html.push_str(".search-input { width: 100%; background: #030712; border: 1px solid var(--card-border); border-radius: 6px; padding: 0.5rem 1rem; color: var(--text); font-size: 0.85rem; outline: none; font-family: inherit; transition: border-color 0.15s ease; }\n");
+    html.push_str(".search-input:focus { border-color: var(--accent); }\n");
+    html.push_str(".filter-group { display: flex; gap: 0.5rem; flex-wrap: wrap; }\n");
+    html.push_str(".filter-pill { background: transparent; border: 1px solid var(--card-border); color: var(--text-muted); padding: 0.4rem 0.85rem; border-radius: 6px; font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: all 0.15s ease; }\n");
+    html.push_str(".filter-pill:hover { border-color: #475569; color: var(--text); }\n");
+    html.push_str(
+        ".filter-pill.active { background: #1e293b; color: var(--text); border-color: #475569; }\n",
+    );
+    html.push_str(".filter-pill.active-fail { background: rgba(244, 63, 94, 0.15); color: #fda4af; border-color: rgba(244, 63, 94, 0.4); }\n");
+    html.push_str(".cards-list { display: flex; flex-direction: column; gap: 1rem; }\n");
+    html.push_str(".audit-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; overflow: hidden; transition: all 0.2s ease; }\n");
+    html.push_str(".audit-card.failed { border-left: 4px solid var(--danger); }\n");
+    html.push_str(".audit-card.passed { border-left: 4px solid var(--primary); }\n");
+    html.push_str(".card-header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 1.25rem; background: rgba(15, 23, 42, 0.6); border-bottom: 1px solid rgba(30, 41, 59, 0.6); flex-wrap: wrap; gap: 0.75rem; }\n");
+    html.push_str(".card-header-left { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }\n");
+    html.push_str(".pill { padding: 3px 10px; border-radius: 6px; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }\n");
+    html.push_str(".pill-pass { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }\n");
+    html.push_str(".pill-fail { background: rgba(244, 63, 94, 0.15); color: #fb7185; border: 1px solid rgba(244, 63, 94, 0.3); }\n");
+    html.push_str(".owasp-tag { font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; font-weight: 600; padding: 2px 7px; border-radius: 4px; background: rgba(56, 189, 248, 0.12); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); }\n");
+    html.push_str(".scenario-name { font-size: 1rem; font-weight: 700; color: var(--text); }\n");
+    html.push_str(".prompt-tag { font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; padding: 2px 8px; border-radius: 4px; background: #030712; color: #94a3b8; border: 1px solid #1e293b; }\n");
+    html.push_str(".latency-tag { font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; color: #64748b; }\n");
+    html.push_str(
+        ".card-body { padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem; }\n",
+    );
+    html.push_str(".violation-alert { background: rgba(244, 63, 94, 0.1); border: 1px solid rgba(244, 63, 94, 0.3); border-radius: 8px; padding: 0.75rem 1rem; color: #fda4af; font-size: 0.85rem; display: flex; align-items: center; gap: 0.5rem; }\n");
+    html.push_str(".payload-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }\n");
+    html.push_str("@media (max-width: 900px) { .payload-grid { grid-template-columns: 1fr; } }\n");
+    html.push_str(".payload-col { display: flex; flex-direction: column; gap: 0.4rem; }\n");
+    html.push_str(".payload-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.2rem; }\n");
+    html.push_str(".payload-title { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }\n");
+    html.push_str(".copy-btn { background: rgba(30, 41, 59, 0.7); border: 1px solid #334155; color: #94a3b8; border-radius: 4px; padding: 2px 8px; font-size: 0.72rem; font-family: inherit; cursor: pointer; transition: all 0.15s ease; }\n");
+    html.push_str(".copy-btn:hover { background: #334155; color: #f8fafc; }\n");
+    html.push_str(".copy-btn.copied { background: rgba(16, 185, 129, 0.2); color: #34d399; border-color: #10b981; }\n");
+    html.push_str(".code-box { background: var(--code-bg); border: 1px solid #1e293b; border-radius: 8px; padding: 0.85rem 1rem; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; color: #cbd5e1; margin: 0; white-space: pre-wrap; word-break: break-word; line-height: 1.5; max-height: 280px; overflow-y: auto; }\n");
+    html.push_str(".code-box::-webkit-scrollbar { width: 6px; height: 6px; }\n");
+    html.push_str(".code-box::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.6); }\n");
+    html.push_str(
+        ".code-box::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }\n",
+    );
+    html.push_str(".code-box::-webkit-scrollbar-thumb:hover { background: #475569; }\n");
+    html.push_str(".empty-state { text-align: center; padding: 4rem 1.5rem; background: var(--card-bg); border: 1px dashed var(--card-border); border-radius: 12px; color: var(--text-muted); font-size: 0.95rem; }\n");
+    html.push_str(".footer { margin-top: 3rem; text-align: center; color: #64748b; font-size: 0.85rem; border-top: 1px solid var(--card-border); padding-top: 2rem; }\n");
     html.push_str("</style>\n</head>\n<body>\n<div class=\"container\">\n");
-    html.push_str("<h1>Nether Ward: Synthetic Red Team Security Matrix</h1>\n");
+
+    // Header
+    html.push_str("<div class=\"header\">\n");
+    html.push_str("  <div class=\"header-brand\">\n");
     html.push_str(
-        "<div style=\"display: flex; gap: 1rem; margin-bottom: 1.5rem; flex-wrap: wrap;\">\n",
+        "    <div class=\"badge-sentinel\">Nether Ward Sentinel v0.2.0 • Pure Rust & Nix</div>\n",
     );
-    html.push_str("  <a href=\"./redteam.junit.xml\" target=\"_blank\" style=\"background: #238636; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: bold; font-size: 0.9rem;\">View JUnit XML</a>\n");
-    html.push_str("  <a href=\"./redteam_report.json\" target=\"_blank\" style=\"background: #1f6feb; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: bold; font-size: 0.9rem;\">View Raw JSON Metrics</a>\n");
-    html.push_str("  <a href=\"./values.json\" target=\"_blank\" style=\"background: #8957e5; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: bold; font-size: 0.9rem;\">View Values Config</a>\n");
-    html.push_str("  <a href=\"https://github.com/shanmukha-sai-chinnam/nether-ward\" target=\"_blank\" style=\"background: #30363d; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: bold; font-size: 0.9rem;\">GitHub Repository</a>\n");
+    html.push_str("    <h1 class=\"title\">Synthetic Red Team Security Matrix</h1>\n");
+    html.push_str("    <p class=\"subtitle\">Autonomous adversarial evaluation benchmark against OWASP Top 10 for Large Language Models.</p>\n");
+    html.push_str("  </div>\n");
+    html.push_str("  <div class=\"toolbar\">\n");
+    html.push_str("    <a href=\"./redteam.junit.xml\" target=\"_blank\" class=\"btn btn-xml\">JUnit XML</a>\n");
+    html.push_str("    <a href=\"./redteam_report.json\" target=\"_blank\" class=\"btn btn-json\">Raw JSON Metrics</a>\n");
+    html.push_str(
+        "    <a href=\"./values.json\" target=\"_blank\" class=\"btn btn-config\">Values Hub</a>\n",
+    );
+    html.push_str("    <a href=\"https://github.com/shanmukha-sai-chinnam/nether-ward\" target=\"_blank\" class=\"btn btn-gh\">GitHub Repository</a>\n");
+    html.push_str("  </div>\n");
     html.push_str("</div>\n");
-    html.push_str("<div class=\"stats\">\n");
+
+    // Stats Grid
+    html.push_str("<div class=\"stats-grid\">\n");
+    html.push_str("  <div class=\"stat-card\">\n");
+    html.push_str("    <div class=\"stat-label\">Total Attack Probes</div>\n");
     html.push_str(&format!(
-        "<div class=\"stat-box\"><div>Total Probes</div><div class=\"stat-num\">{}</div></div>\n",
+        "    <div class=\"stat-val\">{}</div>\n",
         report.total_tests
     ));
-    html.push_str(&format!("<div class=\"stat-box\"><div>Passed Probes</div><div class=\"stat-num pass\">{}</div></div>\n", report.passed_tests));
-    html.push_str(&format!("<div class=\"stat-box\"><div>Caught Vulnerabilities</div><div class=\"stat-num fail\">{}</div></div>\n", report.failed_tests));
-    html.push_str(&format!("<div class=\"stat-box\"><div>Evaluation Duration</div><div class=\"stat-num\">{:.2}s</div></div>\n", report.duration_seconds));
-    html.push_str(
-        "</div>\n<div class=\"card\">\n<h2>Detailed Vulnerability Matrix</h2>\n<table>\n<thead>\n",
-    );
-    html.push_str("<tr><th>Status</th><th>Target Prompt</th><th>Scenario</th><th>Probe Input</th><th>Model Response</th><th>Latency</th></tr>\n</thead>\n<tbody>\n");
+    html.push_str("    <div class=\"stat-sub\">Comparative evaluation matrix</div>\n");
+    html.push_str("  </div>\n");
 
-    for r in &report.results {
-        let badge = if r.passed {
-            "<span class=\"badge-pass\">PASS</span>"
+    html.push_str("  <div class=\"stat-card\">\n");
+    html.push_str("    <div class=\"stat-label\">Defense Pass Rate</div>\n");
+    html.push_str(&format!(
+        "    <div class=\"stat-val val-pass\">{}%</div>\n",
+        pass_pct
+    ));
+    html.push_str(&format!(
+        "    <div class=\"stat-sub\">{} of {} probes neutralized</div>\n",
+        report.passed_tests, report.total_tests
+    ));
+    html.push_str("    <div class=\"progress-bar\"><div class=\"progress-fill\" style=\"width: ");
+    html.push_str(&format!("{}%;\"></div></div>\n", pass_pct));
+    html.push_str("  </div>\n");
+
+    html.push_str("  <div class=\"stat-card\">\n");
+    html.push_str("    <div class=\"stat-label\">Caught Vulnerabilities</div>\n");
+    html.push_str(&format!(
+        "    <div class=\"stat-val val-fail\">{}</div>\n",
+        report.failed_tests
+    ));
+    html.push_str("    <div class=\"stat-sub\">Unhardened agent baseline breaches</div>\n");
+    html.push_str("  </div>\n");
+
+    html.push_str("  <div class=\"stat-card\">\n");
+    html.push_str("    <div class=\"stat-label\">Evaluation Latency</div>\n");
+    html.push_str(&format!(
+        "    <div class=\"stat-val\">{:.2}s</div>\n",
+        report.duration_seconds
+    ));
+    html.push_str("    <div class=\"stat-sub\">Async parallel request execution</div>\n");
+    html.push_str("  </div>\n");
+    html.push_str("</div>\n");
+
+    // Methodology Context Banner
+    html.push_str("<div class=\"benchmark-banner\">\n");
+    html.push_str("  <span class=\"benchmark-badge\">Evaluation Protocol</span>\n");
+    html.push_str("  <p class=\"benchmark-text\"><strong>Comparative Defense Matrix:</strong> Validating unhardened baseline prompts (<code>vulnerable_agent.txt</code>, zero guardrails) against hardened defense prompts (<code>hardened_agent.txt</code>, Nether Ward system directives) across OWASP Top 10 for LLMs attack vectors to demonstrate exploitability and guardrail efficacy.</p>\n");
+    html.push_str("</div>\n");
+
+    // Controls Bar
+    html.push_str("<div class=\"controls-bar\">\n");
+    html.push_str("  <div class=\"search-box\">\n");
+    html.push_str("    <input type=\"text\" id=\"searchInput\" class=\"search-input\" placeholder=\"Search attack scenarios, payloads, or keywords...\" onkeyup=\"filterCards()\">\n");
+    html.push_str("  </div>\n");
+    html.push_str("  <div class=\"filter-group\">\n");
+    html.push_str(&format!(
+        "    <button class=\"filter-pill active\" onclick=\"setFilter('all', this)\">All ({})</button>\n",
+        report.total_tests
+    ));
+    html.push_str(&format!(
+        "    <button class=\"filter-pill\" onclick=\"setFilter('passed', this)\">Passed ({})</button>\n",
+        report.passed_tests
+    ));
+    html.push_str(&format!(
+        "    <button class=\"filter-pill active-fail\" onclick=\"setFilter('vulnerable', this)\">Vulnerabilities ({})</button>\n",
+        report.failed_tests
+    ));
+    html.push_str(&format!(
+        "    <button class=\"filter-pill\" onclick=\"setFilter('hardened', this)\">Hardened Target ({})</button>\n",
+        hardened_count
+    ));
+    html.push_str(&format!(
+        "    <button class=\"filter-pill\" onclick=\"setFilter('unhardened', this)\">Unhardened Baseline ({})</button>\n",
+        unhardened_count
+    ));
+    html.push_str("  </div>\n");
+    html.push_str("</div>\n");
+
+    // Cards List
+    html.push_str("<div class=\"cards-list\" id=\"cardsList\">\n");
+
+    for (idx, r) in report.results.iter().enumerate() {
+        let (status_class, pill_html) = if r.passed {
+            (
+                "passed",
+                "<span class=\"pill pill-pass\">DEFENDED (PASS)</span>",
+            )
         } else {
-            "<span class=\"badge-fail\">VULNERABLE</span>"
+            (
+                "failed",
+                "<span class=\"pill pill-fail\">BREACHED (VULNERABLE)</span>",
+            )
+        };
+
+        let target_category = if r.prompt_name.contains("hardened") {
+            "hardened"
+        } else {
+            "unhardened"
         };
         let escaped_prompt = r
             .user_input
@@ -568,12 +765,247 @@ fn write_html_report(report: &RedTeamSummaryReport, path: &str) -> std::io::Resu
             .replace('&', "&amp;")
             .replace('<', "&lt;")
             .replace('>', "&gt;");
+
+        let owasp_badge = if let Some(code) = r.test_name.split(':').next() {
+            if code.starts_with("LLM") {
+                format!("<span class=\"owasp-tag\">{}</span>", code.trim())
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        };
+
         html.push_str(&format!(
-            "<tr><td>{}</td><td><strong>{}</strong></td><td>{}</td><td><pre>{}</pre></td><td><pre>{}</pre></td><td>{}ms</td></tr>\n",
-            badge, r.prompt_name, r.test_name, escaped_prompt, escaped_output, r.latency_ms
+            "<div class=\"audit-card {}\" data-status=\"{}\" data-target=\"{}\">\n",
+            status_class,
+            if r.passed { "passed" } else { "vulnerable" },
+            target_category
         ));
+
+        // Card Header
+        html.push_str("  <div class=\"card-header\">\n");
+        html.push_str("    <div class=\"card-header-left\">\n");
+        html.push_str(&format!("      {}\n", pill_html));
+        if !owasp_badge.is_empty() {
+            html.push_str(&format!("      {}\n", owasp_badge));
+        }
+        html.push_str(&format!(
+            "      <span class=\"scenario-name\">{}</span>\n",
+            r.test_name
+        ));
+        html.push_str(&format!(
+            "      <span class=\"prompt-tag\">{}</span>\n",
+            r.prompt_name
+        ));
+        html.push_str("    </div>\n");
+        html.push_str(&format!(
+            "    <div class=\"latency-tag\">{}ms</div>\n",
+            r.latency_ms
+        ));
+        html.push_str("  </div>\n");
+
+        // Card Body
+        html.push_str("  <div class=\"card-body\">\n");
+        if !r.passed {
+            let reason = r.failure_reason.as_deref().unwrap_or("Assertion failed");
+            let escaped_reason = reason
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;");
+            html.push_str(&format!(
+                "    <div class=\"violation-alert\"><strong>Security Violation Detected:</strong> {}</div>\n",
+                escaped_reason
+            ));
+        }
+
+        html.push_str("    <div class=\"payload-grid\">\n");
+        html.push_str("      <div class=\"payload-col\">\n");
+        html.push_str("        <div class=\"payload-header\">\n");
+        html.push_str(
+            "          <span class=\"payload-title\">Adversarial Probe Payload (User Input)</span>\n",
+        );
+        html.push_str(&format!(
+            "          <button class=\"copy-btn\" onclick=\"copySnippet(this, 'probe-{}')\">Copy</button>\n",
+            idx
+        ));
+        html.push_str("        </div>\n");
+        html.push_str(&format!(
+            "        <pre class=\"code-box\" id=\"probe-{}\">{}</pre>\n",
+            idx, escaped_prompt
+        ));
+        html.push_str("      </div>\n");
+
+        html.push_str("      <div class=\"payload-col\">\n");
+        html.push_str("        <div class=\"payload-header\">\n");
+        html.push_str(
+            "          <span class=\"payload-title\">Model Completion / Guardrail Response</span>\n",
+        );
+        html.push_str(&format!(
+            "          <button class=\"copy-btn\" onclick=\"copySnippet(this, 'output-{}')\">Copy</button>\n",
+            idx
+        ));
+        html.push_str("        </div>\n");
+        html.push_str(&format!(
+            "        <pre class=\"code-box\" id=\"output-{}\">{}</pre>\n",
+            idx, escaped_output
+        ));
+        html.push_str("      </div>\n");
+        html.push_str("    </div>\n");
+
+        html.push_str("  </div>\n");
+        html.push_str("</div>\n");
     }
 
-    html.push_str("</tbody>\n</table>\n</div>\n</div>\n</body>\n</html>\n");
+    // Empty state container
+    html.push_str("<div id=\"emptyState\" class=\"empty-state\" style=\"display:none;\">\n");
+    html.push_str("  No security audit records match your current search and filter criteria.\n");
+    html.push_str("</div>\n");
+
+    html.push_str("</div>\n");
+
+    // JavaScript Filter Functions
+    html.push_str("<script>\n");
+    html.push_str("let currentFilter = 'all';\n");
+    html.push_str("function setFilter(filter, el) {\n");
+    html.push_str("  currentFilter = filter;\n");
+    html.push_str("  document.querySelectorAll('.filter-pill').forEach(b => b.classList.remove('active', 'active-fail'));\n");
+    html.push_str("  if (filter === 'vulnerable') el.classList.add('active-fail');\n");
+    html.push_str("  else el.classList.add('active');\n");
+    html.push_str("  filterCards();\n");
+    html.push_str("}\n");
+    html.push_str("function filterCards() {\n");
+    html.push_str("  const q = document.getElementById('searchInput').value.toLowerCase();\n");
+    html.push_str("  const cards = document.querySelectorAll('.audit-card');\n");
+    html.push_str("  let visibleCount = 0;\n");
+    html.push_str("  cards.forEach(card => {\n");
+    html.push_str("    const status = card.getAttribute('data-status');\n");
+    html.push_str("    const target = card.getAttribute('data-target');\n");
+    html.push_str("    const text = card.textContent.toLowerCase();\n");
+    html.push_str("    let matchFilter = true;\n");
+    html.push_str(
+        "    if (currentFilter === 'passed' && status !== 'passed') matchFilter = false;\n",
+    );
+    html.push_str(
+        "    if (currentFilter === 'vulnerable' && status !== 'vulnerable') matchFilter = false;\n",
+    );
+    html.push_str(
+        "    if (currentFilter === 'hardened' && target !== 'hardened') matchFilter = false;\n",
+    );
+    html.push_str(
+        "    if (currentFilter === 'unhardened' && target !== 'unhardened') matchFilter = false;\n",
+    );
+    html.push_str("    const matchQuery = q === '' || text.includes(q);\n");
+    html.push_str("    const isVisible = matchFilter && matchQuery;\n");
+    html.push_str("    card.style.display = isVisible ? 'block' : 'none';\n");
+    html.push_str("    if (isVisible) visibleCount++;\n");
+    html.push_str("  });\n");
+    html.push_str("  const empty = document.getElementById('emptyState');\n");
+    html.push_str("  if (empty) {\n");
+    html.push_str("    empty.style.display = visibleCount === 0 ? 'block' : 'none';\n");
+    html.push_str("  }\n");
+    html.push_str("}\n");
+    html.push_str("function copySnippet(btn, id) {\n");
+    html.push_str("  const el = document.getElementById(id);\n");
+    html.push_str("  if (!el) return;\n");
+    html.push_str("  navigator.clipboard.writeText(el.innerText).then(() => {\n");
+    html.push_str("    const orig = btn.innerText;\n");
+    html.push_str("    btn.innerText = 'Copied';\n");
+    html.push_str("    btn.classList.add('copied');\n");
+    html.push_str("    setTimeout(() => {\n");
+    html.push_str("      btn.innerText = orig;\n");
+    html.push_str("      btn.classList.remove('copied');\n");
+    html.push_str("    }, 1800);\n");
+    html.push_str("  });\n");
+    html.push_str("}\n");
+    html.push_str("</script>\n");
+
+    // Footer
+    html.push_str("<div class=\"footer\">\n");
+    html.push_str("  Nether Ward • Declarative AI Infrastructure Platform & Autonomous Cybersecurity Sentinel • Pure Rust & NixOS<br>\n");
+    html.push_str("  Hosted via GitHub Pages • Evaluated with Google Gemini Flash Lite\n");
+    html.push_str("</div>\n");
+
+    html.push_str("</div>\n</body>\n</html>\n");
     fs::write(path, html)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_render_html_report_generation() {
+        let sample_report = RedTeamSummaryReport {
+            timestamp: "2026-11-11T12:00:00Z".to_string(),
+            total_tests: 2,
+            passed_tests: 1,
+            failed_tests: 1,
+            duration_seconds: 4.5,
+            results: vec![
+                EvaluationResult {
+                    test_name: "LLM01: Prompt Injection Test".to_string(),
+                    prompt_name: "vulnerable_agent.txt".to_string(),
+                    user_input: "test attack".to_string(),
+                    model_output: "attack succeeded".to_string(),
+                    passed: false,
+                    failure_reason: Some("Found forbidden token".to_string()),
+                    latency_ms: 500,
+                },
+                EvaluationResult {
+                    test_name: "LLM02: Credential Extraction".to_string(),
+                    prompt_name: "hardened_agent.txt".to_string(),
+                    user_input: "extract key".to_string(),
+                    model_output: "access denied".to_string(),
+                    passed: true,
+                    failure_reason: None,
+                    latency_ms: 350,
+                },
+            ],
+        };
+
+        let temp_path = std::env::temp_dir().join("test_redteam_report.html");
+        let res = write_html_report(&sample_report, temp_path.to_str().unwrap());
+        assert!(res.is_ok());
+
+        let content = fs::read_to_string(&temp_path).unwrap();
+        assert!(content.contains("Nether Ward Sentinel"));
+        assert!(content.contains("LLM01: Prompt Injection Test"));
+        assert!(content.contains("Security Violation Detected:"));
+        assert!(content.contains("50%"));
+        let _ = fs::remove_file(temp_path);
+    }
+
+    #[test]
+    fn test_write_junit_xml_generation() {
+        let results = vec![
+            EvaluationResult {
+                test_name: "LLM01: Injection".to_string(),
+                prompt_name: "vulnerable_agent.txt".to_string(),
+                user_input: "input".to_string(),
+                model_output: "output".to_string(),
+                passed: false,
+                failure_reason: Some("Breached".to_string()),
+                latency_ms: 1000,
+            },
+            EvaluationResult {
+                test_name: "LLM02: Access".to_string(),
+                prompt_name: "hardened_agent.txt".to_string(),
+                user_input: "input2".to_string(),
+                model_output: "output2".to_string(),
+                passed: true,
+                failure_reason: None,
+                latency_ms: 1200,
+            },
+        ];
+
+        let temp_path = std::env::temp_dir().join("test_redteam.junit.xml");
+        let res = write_junit_xml(&results, 2.2, temp_path.to_str().unwrap());
+        assert!(res.is_ok());
+
+        let content = fs::read_to_string(&temp_path).unwrap();
+        assert!(content.contains("<testsuites errors=\"0\" failures=\"1\""));
+        assert!(content.contains("<failure message=\"Caught Vulnerability\""));
+        let _ = fs::remove_file(temp_path);
+    }
 }

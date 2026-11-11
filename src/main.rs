@@ -54,6 +54,10 @@ enum Commands {
         /// Override evaluation model target
         #[arg(short, long)]
         model: Option<String>,
+
+        /// Regenerate HTML dashboard from existing JSON report
+        #[arg(long)]
+        render_from: Option<PathBuf>,
     },
 
     /// Check connection status of local Ollama quantized inference engine
@@ -103,11 +107,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             gateway::run_gateway(port, model).await?;
         }
 
-        Commands::Redteam { config, model } => {
-            let all_passed = redteam::run_redteam(&config, model.as_deref()).await?;
-            if !all_passed {
-                // Exit with code 100 to signal caught vulnerabilities/assertion failures
-                std::process::exit(100);
+        Commands::Redteam {
+            config,
+            model,
+            render_from,
+        } => {
+            if let Some(json_path) = render_from {
+                println!(
+                    "==> Rendering HTML dashboard from JSON report: {}",
+                    json_path.display()
+                );
+                redteam::render_html_from_json(
+                    json_path.to_str().unwrap_or("reports/redteam_report.json"),
+                    "reports/redteam_report.html",
+                )?;
+                println!(
+                    "{}",
+                    "Successfully generated reports/redteam_report.html"
+                        .green()
+                        .bold()
+                );
+            } else {
+                let all_passed = redteam::run_redteam(&config, model.as_deref()).await?;
+                if !all_passed {
+                    // Exit with code 100 to signal caught vulnerabilities/assertion failures
+                    std::process::exit(100);
+                }
             }
         }
 
