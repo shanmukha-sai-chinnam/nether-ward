@@ -1,3 +1,4 @@
+use base64::prelude::*;
 use colored::*;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -12,6 +13,7 @@ pub enum RuleCategory {
     SystemExecution,
     Injection,
     AgentAgency,
+    ObfuscationEvasion,
 }
 
 impl std::fmt::Display for RuleCategory {
@@ -23,6 +25,7 @@ impl std::fmt::Display for RuleCategory {
             RuleCategory::SystemExecution => write!(f, "SYSTEM_EXECUTION"),
             RuleCategory::Injection => write!(f, "INJECTION_TRAVERSAL"),
             RuleCategory::AgentAgency => write!(f, "EXCESSIVE_AGENCY"),
+            RuleCategory::ObfuscationEvasion => write!(f, "OBFUSCATION_EVASION"),
         }
     }
 }
@@ -255,6 +258,40 @@ pub fn get_default_rules() -> Vec<SastRule> {
             pattern: r"(?:'\s*OR\s*'1'='1|UNION\s+SELECT|;\s*DROP\s+TABLE)".to_string(),
             recommendation: "Use parameterized prepared statements exclusively; avoid string concatenation in SQL queries.".to_string(),
         },
+
+        // 6. Semantic Obfuscation & Evasion Vectors
+        SastRule {
+            id: "NW-OBF-001".to_string(),
+            title: "Obfuscated Dynamic Execution via Reflection".to_string(),
+            category: RuleCategory::ObfuscationEvasion,
+            severity: SastSeverity::Critical,
+            pattern: r#"(?:getattr\s*\(\s*(?:__import__\s*\(|importlib|os|sys)|__import__\s*\(\s*['"](?:os|subprocess|sys|socket|pty|shutil)['"]|importlib\.import_module\s*\(\s*['"](?:os|subprocess|sys|socket|pty)['"])"#.to_string(),
+            recommendation: "Prohibit dynamic module reflection and indirect imports in autonomous agent code.".to_string(),
+        },
+        SastRule {
+            id: "NW-OBF-002".to_string(),
+            title: "Encoded Payload Dynamic Execution (Base64 / Hex Decode into Eval/Exec)".to_string(),
+            category: RuleCategory::ObfuscationEvasion,
+            severity: SastSeverity::Critical,
+            pattern: r#"(?:(?:exec|eval)\s*\(\s*(?:[a-zA-Z0-9_.]+\.)?(?:b64decode|decodebytes|fromhex|unhexlify)|(?:atob|Buffer\.from)\s*\([^)]+\)\s*(?:\.toString\(\))?\s*\|>\s*eval|eval\s*\(\s*atob\s*\()"#.to_string(),
+            recommendation: "Block dynamic decoding and execution of in-memory byte payloads.".to_string(),
+        },
+        SastRule {
+            id: "NW-OBF-003".to_string(),
+            title: "String Concatenation Evasion in Dangerous Execution Sink".to_string(),
+            category: RuleCategory::ObfuscationEvasion,
+            severity: SastSeverity::High,
+            pattern: r#"(?:['"](?:os\.?|subproc|sys)[\s'"]*\+[\s'"]*(?:system|tem|ess|stem)|['"]ev[\s'"]*\+[\s'"]*al['"]|getattr\s*\([^,]+,\s*['"][a-zA-Z0-9_]+['"]\s*\+\s*['"][a-zA-Z0-9_]+['"]\))"#.to_string(),
+            recommendation: "Eliminate string concatenation used to disguise execution function symbols.".to_string(),
+        },
+        SastRule {
+            id: "NW-OBF-004".to_string(),
+            title: "Embedded Base64 Encoded Executable / Shellcode Stager".to_string(),
+            category: RuleCategory::ObfuscationEvasion,
+            severity: SastSeverity::Critical,
+            pattern: r#"(?:(?:b64decode|decodebytes)\s*\(\s*['"][A-Za-z0-9+/=]{24,}['"])"#.to_string(),
+            recommendation: "Inspect decoded payload; embedded encoded binary or script exceeds security threshold.".to_string(),
+        },
     ]
 }
 
@@ -293,6 +330,74 @@ pub fn sanitize_secrets(content: &str) -> (String, usize) {
     (sanitized, redactions_count)
 }
 
+/// Helper to determine if a source line is a pure comment
+fn is_comment_line(line: &str) -> bool {
+    let t = line.trim();
+    t.starts_with("//")
+        || t.starts_with('#')
+        || t.starts_with("/*")
+        || t.starts_with('*')
+        || t.starts_with("<!--")
+}
+
+/// Deep inspection of base64 string literals to detect encoded stagers and shellcode
+pub fn scan_decoded_base64_payloads(
+    content: &str,
+    file_name: Option<&str>,
+) -> Vec<VulnerabilityFinding> {
+    let mut findings = Vec::new();
+    let b64_re = match Regex::new(r#"(?:'|")([A-Za-z0-9+/]{28,}={0,2})(?:'|")"#) {
+        Ok(re) => re,
+        Err(_) => return findings,
+    };
+
+    let suspicious_indicators = [
+        "/bin/sh",
+        "/bin/bash",
+        "/dev/tcp/",
+        "nc -e",
+        "os.system",
+        "subprocess.Popen",
+        "rm -rf",
+        "Invoke-Expression",
+        "powershell",
+        "eval(",
+        "exec(",
+        "wget ",
+        "curl ",
+        "cat /etc/shadow",
+    ];
+
+    for (line_idx, line) in content.lines().enumerate() {
+        for caps in b64_re.captures_iter(line) {
+            if let Some(mat) = caps.get(1) {
+                let candidate = mat.as_str();
+                if let Ok(decoded_bytes) = BASE64_STANDARD.decode(candidate) {
+                    if let Ok(decoded_str) = String::from_utf8(decoded_bytes) {
+                        for indicator in suspicious_indicators {
+                            if decoded_str.contains(indicator) {
+                                findings.push(VulnerabilityFinding {
+                                    rule_id: "NW-OBF-004".to_string(),
+                                    title: "Embedded Base64 Encoded Executable / Shellcode Stager".to_string(),
+                                    category: RuleCategory::ObfuscationEvasion,
+                                    severity: SastSeverity::Critical,
+                                    file_path: file_name.map(|s| s.to_string()),
+                                    line_number: Some(line_idx + 1),
+                                    matched_snippet: format!("base64 payload decodes to suspicious sink: '{}'", indicator),
+                                    recommendation: "Quarantine decoded payload; base64 string disguises unauthorized command execution.".to_string(),
+                                });
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    findings
+}
+
 /// Scan string content against all active SAST rules
 pub fn scan_content(content: &str, file_name: Option<&str>) -> Vec<VulnerabilityFinding> {
     let rules = get_default_rules();
@@ -307,6 +412,14 @@ pub fn scan_content(content: &str, file_name: Option<&str>) -> Vec<Vulnerability
                     || trimmed.starts_with("title:")
                     || trimmed.starts_with("recommendation:")
                     || trimmed.starts_with("SastRule {")
+                {
+                    continue;
+                }
+
+                // Suppress comment false-positives for dangerous code and obfuscation patterns (secrets are still reported)
+                if is_comment_line(line)
+                    && (rule.category == RuleCategory::DangerousCode
+                        || rule.category == RuleCategory::ObfuscationEvasion)
                 {
                     continue;
                 }
@@ -333,6 +446,10 @@ pub fn scan_content(content: &str, file_name: Option<&str>) -> Vec<Vulnerability
             }
         }
     }
+
+    // Run deep payload de-obfuscation
+    let b64_findings = scan_decoded_base64_payloads(content, file_name);
+    findings.extend(b64_findings);
 
     findings
 }
@@ -780,5 +897,52 @@ mod tests {
         assert_eq!(count, 1);
         assert!(!sanitized.contains("AKIAIOSFODNN7EXAMPLE"));
         assert!(sanitized.contains("AKIA***REDACTED***MPLE"));
+    }
+
+    #[test]
+    fn test_obfuscation_reflection_detection() {
+        let sample = "func = getattr(__import__('os'), 'system')\nfunc('whoami')\n";
+        let findings = scan_content(sample, Some("evasion.py"));
+        assert!(findings.iter().any(|f| f.rule_id == "NW-OBF-001"));
+        assert_eq!(findings[0].severity, SastSeverity::Critical);
+    }
+
+    #[test]
+    fn test_obfuscation_encoded_eval_detection() {
+        let sample = "import base64\nexec(base64.b64decode(payload))\n";
+        let findings = scan_content(sample, Some("loader.py"));
+        assert!(findings.iter().any(|f| f.rule_id == "NW-OBF-002"));
+    }
+
+    #[test]
+    fn test_obfuscation_string_concat_detection() {
+        let sample = "cmd = 'os.' + 'system'\n";
+        let findings = scan_content(sample, Some("concat.py"));
+        assert!(findings.iter().any(|f| f.rule_id == "NW-OBF-003"));
+    }
+
+    #[test]
+    fn test_obfuscation_embedded_base64_payload_detection() {
+        // "os.system('cat /etc/shadow')" encoded in base64 is "b3Muc3lzdGVtKCdjYXQgL2V0Yy9zaGFkb3cnKQ=="
+        let sample = "const stager = 'b3Muc3lzdGVtKCdjYXQgL2V0Yy9zaGFkb3cnKQ==';\n";
+        let findings = scan_content(sample, Some("stager.js"));
+        assert!(findings.iter().any(|f| f.rule_id == "NW-OBF-004"));
+    }
+
+    #[test]
+    fn test_comment_dangerous_code_suppression_and_secret_retention() {
+        let comment_code = "// eval(user_input) is bad practice\n# os.system('echo test')\n";
+        let findings = scan_content(comment_code, Some("docs.rs"));
+        assert!(
+            findings.is_empty(),
+            "Dangerous code inside comments should not trigger false positives"
+        );
+
+        let comment_secret = "// Note: AWS key is AKIAIOSFODNN7EXAMPLE for dev\n";
+        let secret_findings = scan_content(comment_secret, Some("notes.txt"));
+        assert!(
+            secret_findings.iter().any(|f| f.rule_id == "NW-SEC-001"),
+            "Secrets in comments must be flagged"
+        );
     }
 }

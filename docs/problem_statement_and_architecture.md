@@ -149,6 +149,14 @@ Nether Ward categorizes all detected security events under standardized rule ide
 | `NW-SYS-004` | In-Memory PowerShell Web Download Stager | System Execution | High |
 | `NW-INJ-001` | Directory Path Traversal Sequence | Injection | High |
 | `NW-INJ-002` | SQL Injection Probe Syntax in Parameters | Injection | High |
+| `NW-OBF-001` | Obfuscated Dynamic Execution via Reflection | Obfuscation Evasion | Critical |
+| `NW-OBF-002` | Encoded Payload Dynamic Execution (Base64/Hex) | Obfuscation Evasion | Critical |
+| `NW-OBF-003` | String Concatenation Evasion in Execution Sink | Obfuscation Evasion | High |
+| `NW-OBF-004` | Embedded Base64 Encoded Shellcode Stager | Obfuscation Evasion | Critical |
+| `NW-MCP-001` | Shell-Wrapped MCP Server Invocations | System Execution | High |
+| `NW-MCP-002` | Sensitive Host Resource URI Access | System Execution | Critical |
+| `NW-MCP-005` | Stateful Multi-Turn Staged Drop-and-Execute | System Execution | Critical |
+| `NW-MCP-006` | Stateful Multi-Turn Read to Outbound Exfiltration | Secret Leak | Critical |
 
 ---
 

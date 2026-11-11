@@ -16,6 +16,7 @@ fn test_e2e_cli_help() {
     assert!(stdout.contains("gateway"));
     assert!(stdout.contains("mcp"));
     assert!(stdout.contains("redteam"));
+    assert!(stdout.contains("sandbox"));
 }
 
 #[test]
@@ -32,6 +33,8 @@ fn test_e2e_cli_threat_rules_listing() {
     assert!(stdout.contains("NW-SYS-001"));
     assert!(stdout.contains("NW-CODE-001"));
     assert!(stdout.contains("NW-INJ-001"));
+    assert!(stdout.contains("NW-OBF-001"));
+    assert!(stdout.contains("NW-OBF-002"));
 }
 
 #[test]
@@ -138,4 +141,41 @@ fn test_e2e_cli_mcp_audit() {
     assert!(stdout.contains("CLEAN"));
 
     let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_e2e_cli_sandbox_dry_run() {
+    let bin = env!("CARGO_BIN_EXE_nether-ward");
+    let output = Command::new(bin)
+        .args([
+            "sandbox",
+            "--dry-run",
+            "--no-network",
+            "--",
+            "echo",
+            "sandbox_dry_run",
+        ])
+        .output()
+        .expect("Failed to execute nether-ward binary");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("NETHER WARD SANDBOX SPECIFICATION (DRY RUN)"));
+    assert!(stdout.contains("Target Command: echo sandbox_dry_run"));
+}
+
+#[test]
+fn test_e2e_cli_sandbox_execution() {
+    let bin = env!("CARGO_BIN_EXE_nether-ward");
+    let output = Command::new(bin)
+        .args(["sandbox", "--json", "--", "echo", "e2e_sandbox_alive"])
+        .output()
+        .expect("Failed to execute nether-ward binary");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("Valid JSON output");
+    assert_eq!(parsed["success"], true);
+    assert_eq!(parsed["exit_code"], 0);
+    assert_eq!(parsed["command"], "echo");
 }

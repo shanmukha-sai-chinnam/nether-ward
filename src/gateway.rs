@@ -173,11 +173,13 @@ pub fn inspect_tool_calls(
     Ok(())
 }
 
-/// Firewall scan of an incoming ChatCompletionRequest with optional in-flight sanitization
+/// Firewall scan of an incoming ChatCompletionRequest with optional in-flight sanitization and multi-turn tracking
 pub fn scan_and_sanitize_incoming_request(
     req: &mut ChatCompletionRequest,
     sanitize: bool,
 ) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    let mut session_tracker = crate::mcp::McpSessionTracker::default();
+
     for msg in &mut req.messages {
         if let Some(ref mut text) = msg.content {
             if sanitize {
@@ -193,6 +195,31 @@ pub fn scan_and_sanitize_incoming_request(
                     tc.function.arguments = sanitized_args;
                 }
                 inspect_text(&tc.function.arguments)?;
+
+                // Evaluate multi-turn stateful tool chain
+                let parsed_args = serde_json::from_str::<serde_json::Value>(&tc.function.arguments)
+                    .unwrap_or(serde_json::json!({ "arguments": tc.function.arguments }));
+                if let Err(finding) =
+                    session_tracker.record_and_evaluate(&tc.function.name, &parsed_args)
+                {
+                    return Err((
+                        StatusCode::FORBIDDEN,
+                        Json(serde_json::json!({
+                            "error": {
+                                "message": format!(
+                                    "Nether Ward Sentinel: Multi-turn tool chain blocked by firewall. Rule: {} [{}]",
+                                    finding.title, finding.rule_id
+                                ),
+                                "type": "security_policy_violation",
+                                "code": "nether_ward_multi_turn_blocked",
+                                "rule_id": finding.rule_id,
+                                "category": finding.category.to_string(),
+                                "severity": finding.severity.to_string(),
+                                "recommendation": finding.recommendation
+                            }
+                        })),
+                    ));
+                }
             }
         }
     }
@@ -858,5 +885,69 @@ mod tests {
         assert_eq!(metrics.total_requests.load(Ordering::Relaxed), 0);
         metrics.total_requests.fetch_add(1, Ordering::Relaxed);
         assert_eq!(metrics.total_requests.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_scan_and_sanitize_incoming_request_blocks_multi_turn_chain() {
+        let mut req = ChatCompletionRequest {
+            model: Some("test-model".to_string()),
+            messages: vec![
+                ChatMessage {
+                    role: "assistant".to_string(),
+                    content: None,
+                    name: None,
+                    tool_calls: Some(vec![ToolCall {
+                        id: "call_1".to_string(),
+                        tool_type: "function".to_string(),
+                        function: FunctionCall {
+                            name: "write_file".to_string(),
+                            arguments:
+                                r#"{"path":"/tmp/staged_backdoor.sh","content":"echo evil"}"#
+                                    .to_string(),
+                        },
+                    }]),
+                    tool_call_id: None,
+                },
+                ChatMessage {
+                    role: "tool".to_string(),
+                    content: Some("File written successfully".to_string()),
+                    name: Some("write_file".to_string()),
+                    tool_calls: None,
+                    tool_call_id: Some("call_1".to_string()),
+                },
+                ChatMessage {
+                    role: "assistant".to_string(),
+                    content: None,
+                    name: None,
+                    tool_calls: Some(vec![ToolCall {
+                        id: "call_2".to_string(),
+                        tool_type: "function".to_string(),
+                        function: FunctionCall {
+                            name: "run_command".to_string(),
+                            arguments: r#"{"command":"bash /tmp/staged_backdoor.sh"}"#.to_string(),
+                        },
+                    }]),
+                    tool_call_id: None,
+                },
+            ],
+            tools: None,
+            tool_choice: None,
+            temperature: None,
+            max_tokens: None,
+            stream: None,
+        };
+
+        let res = scan_and_sanitize_incoming_request(&mut req, false);
+        assert!(
+            res.is_err(),
+            "Multi-turn drop-and-execute chain must be blocked"
+        );
+        let (status, err_json) = res.unwrap_err();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert!(err_json["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("Multi-turn tool chain blocked"));
+        assert_eq!(err_json["error"]["rule_id"], "NW-MCP-005");
     }
 }

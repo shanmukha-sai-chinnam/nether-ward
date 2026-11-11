@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use nether_ward::gateway;
 use nether_ward::mcp;
 use nether_ward::redteam;
+use nether_ward::sandbox;
 use nether_ward::sast;
 use nether_ward::threat;
 
@@ -134,6 +135,37 @@ enum Commands {
         /// Ollama daemon base URL
         #[arg(short, long, default_value = "http://localhost:11434")]
         url: String,
+    },
+
+    /// Execute a tool or process inside an isolated ephemeral Linux kernel security sandbox
+    Sandbox {
+        /// Target workspace directory (defaults to current directory)
+        #[arg(short, long)]
+        workspace: Option<PathBuf>,
+
+        /// Isolate and drop network access (CLONE_NEWNET)
+        #[arg(long)]
+        no_network: bool,
+
+        /// Mount host filesystem root as read-only
+        #[arg(long)]
+        read_only_root: bool,
+
+        /// Execution timeout in seconds
+        #[arg(short, long, default_value_t = 30)]
+        timeout: u64,
+
+        /// Dry-run mode: prints sandbox security policy without executing
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
+
+        /// Command and arguments to execute inside sandbox
+        #[arg(last = true, required = true)]
+        command: Vec<String>,
     },
 }
 
@@ -461,6 +493,63 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "================================================================================"
                     .blue()
             );
+        }
+
+        Commands::Sandbox {
+            workspace,
+            no_network,
+            read_only_root,
+            timeout,
+            dry_run,
+            json,
+            command,
+        } => {
+            if command.is_empty() {
+                eprintln!(
+                    "{}: No command specified for sandboxed execution.",
+                    "Error".red().bold()
+                );
+                std::process::exit(1);
+            }
+
+            let ws = workspace
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+            let cfg = sandbox::SandboxConfig {
+                workspace: ws,
+                no_network,
+                read_only_root,
+                timeout_secs: timeout,
+                dry_run,
+                capture_output: json,
+            };
+
+            let prog = &command[0];
+            let args = &command[1..];
+
+            match sandbox::run_sandboxed(&cfg, prog, args).await {
+                Ok(report) => {
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&report)?);
+                    } else if !dry_run {
+                        eprintln!(
+                            "{} Completed in {}ms via engine '{}' (Exit Code: {:?})",
+                            "NETHER WARD SANDBOX:".green().bold(),
+                            report.duration_ms,
+                            report.engine,
+                            report.exit_code
+                        );
+                    }
+                    if let Some(code) = report.exit_code {
+                        if code != 0 {
+                            std::process::exit(code);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("{} Sandbox execution failed: {e}", "Error:".red().bold());
+                    std::process::exit(1);
+                }
+            }
         }
     }
 

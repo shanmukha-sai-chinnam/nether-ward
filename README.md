@@ -8,9 +8,10 @@ Named after Pugna's Nether Ward in Dota 2: an in-game ward that monitors its are
 
 ## Capabilities
 
-- **Active Stdio MCP Security Proxy (`nether-ward mcp --proxy [--sanitize] -- <cmd>`)**: Intercepts line-delimited JSON-RPC messages between coding agents (Antigravity, Claude Code, Cursor) and local MCP server tools. Blocks hostile commands (`rm -rf /`, reverse shells) with structured JSON-RPC 2.0 error responses without terminating the server session, and redacts exposed credentials in-flight.
+- **Active Stdio MCP Security Proxy (`nether-ward mcp --proxy [--sanitize] -- <cmd>`)**: Intercepts line-delimited JSON-RPC messages between coding agents (Antigravity, Claude Code, Cursor) and local MCP server tools. Evaluates stateful multi-turn attack chains (staged drop-and-execute sequences, sensitive read followed by outbound exfiltration), blocks hostile commands (`rm -rf /`, reverse shells) with structured JSON-RPC 2.0 error responses without terminating the server session, and redacts exposed credentials in-flight.
+- **Kernel Sandbox Runner (`nether-ward sandbox [--workspace <dir>] [--no-network] [--dry-run] -- <cmd>`)**: Executes agent tools and subprocesses inside ephemeral Linux kernel security boundaries using Bubblewrap container namespaces (`bwrap`) or native `PR_SET_NO_NEW_PRIVS` with network isolation (`CLONE_NEWNET`) and environment variable scrubbing (`LD_PRELOAD`, `LD_LIBRARY_PATH`).
 - **MCP Configuration Security Auditor (`nether-ward mcp --config <path>`)**: Audits `.agents/mcp_config.json` for shell-wrapping antipatterns (`bash -c`, `sh`), injected arguments, and exposed environment credentials.
-- **Static Analysis (SAST) Engine (`nether-ward threat --sast <dir>`)**: Scans source code, agent tools, and configurations for exposed API secrets, dynamic code evaluation (`eval`, `exec`), shell invocations (`os.system`, `subprocess(shell=True)`), pickle deserialization payloads (`__reduce__`), and SQL injection patterns.
+- **Static Analysis (SAST) & De-Obfuscation Engine (`nether-ward threat --sast <dir>`)**: Scans source code, agent tools, and configurations for exposed API secrets, dynamic code evaluation (`eval`, `exec`), shell invocations (`os.system`, `subprocess(shell=True)`), reflection-based evasion (`getattr(__import__('os'), 'system')`), string concatenation tricks, base64-encoded shellcode stagers, pickle deserialization payloads (`__reduce__`), and SQL injection patterns. Suppresses comment false-positives while preserving secret detection.
 - **Sliding-Window & Shannon Entropy Triage (`nether-ward threat --dir <dir>`)**: Computes byte-level information entropy ($H = -\sum p \log_2 p$) and localized sliding-window entropy across chunks to identify packed binaries, obfuscated payloads, and embedded shellcode stagers.
 - **Synthetic Red Teaming (`nether-ward redteam`)**: Executes parallel asynchronous probes (`tokio::sync::Semaphore`) evaluating target models against the OWASP Top 10 for Large Language Models. Supports deterministic substring matching, regex assertions (`regex`, `not-regex`), tool misuse assertions (`tool-not-called`), and SAST cleanliness assertions (`sast-clean`).
 - **Dual Model Runtime Support (`--endpoint`)**: Evaluates remote cloud APIs (Google Gemini) or local OpenAI-compatible endpoints (`/v1/chat/completions`) such as Ollama, llama.cpp, or Nether Ward's internal gateway.
@@ -80,6 +81,7 @@ For the technical problem statement, 5-layer threat model, and architectural blu
 | `src/jev.rs` | TypeSafe AI System One HTTP client for calibrated semantic judgments. |
 | `src/mcp.rs` | Model Context Protocol configuration auditor and bidirectional stdio security proxy. |
 | `src/redteam.rs` | Multi-turn red team runner, regex/SAST assertions, JUnit XML, and HTML matrix. |
+| `src/sandbox.rs` | Ephemeral Linux kernel sandbox runner (Bubblewrap and native PR_SET_NO_NEW_PRIVS). |
 | `src/gateway.rs` | Axum reverse proxy with tool-call firewall, secret sanitization, SSE streaming, and metrics. |
 | `datasets/` | Synthetic test suites: `owasp_top10_expanded.jsonl`, `threat_samples/`, and `trajectories/`. |
 | `.github/workflows/` | GitHub Actions pipelines: CodeQL, RustSec audit, JUnit checks, and Pages deployment. |
@@ -110,6 +112,14 @@ For the technical problem statement, 5-layer threat model, and architectural blu
 | `NW-SYS-004` | HIGH | System Execution | PowerShell Web Download Stagers (`Invoke-Expression`) |
 | `NW-INJ-001` | HIGH | Injection | Directory Path Traversal Sequences (`../../../../`) |
 | `NW-INJ-002` | HIGH | Injection | SQL Injection Syntax in Parameters (`' OR '1'='1`) |
+| `NW-OBF-001` | CRITICAL | Obfuscation Evasion | Obfuscated Reflection Execution (`getattr(__import__('os'), ...)`) |
+| `NW-OBF-002` | CRITICAL | Obfuscation Evasion | Encoded Payload Dynamic Execution (`exec(b64decode(...))`) |
+| `NW-OBF-003` | HIGH | Obfuscation Evasion | String Concatenation in Execution Sink (`'os.' + 'system'`) |
+| `NW-OBF-004` | CRITICAL | Obfuscation Evasion | Embedded Base64 Encoded Executable / Shellcode Stager |
+| `NW-MCP-001` | HIGH | System Execution | Shell-Wrapped MCP Server Invocations (`bash -c`, `sh`) |
+| `NW-MCP-002` | CRITICAL | System Execution | Sensitive Host Resource URI Access (`/etc/shadow`, `id_rsa`) |
+| `NW-MCP-005` | CRITICAL | System Execution | Stateful Multi-Turn Staged Drop-and-Execute Sequence |
+| `NW-MCP-006` | CRITICAL | Secret Leak | Stateful Multi-Turn Sensitive Read to Outbound Exfiltration |
 
 ---
 
