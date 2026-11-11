@@ -1,0 +1,25 @@
+# Direnv & Nix build artifacts
+.direnv/
+result
+result-*
+
+# Python virtualenvs & caches
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+
+# Node & JS tooling
+node_modules/
+npm-debug.log*
+
+# AI Evals & runtime logs
+.promptfoo/
+promptfoo.log
+*.log
+
+# Local secrets & API keys
+.env
+.env.local

@@ -1,0 +1,18 @@
+{
+  "gateway": {
+    "host": "127.0.0.1",
+    "port": 4000,
+    "master_key": "sk-ai-infra-local",
+    "database": "data/gateway.db"
+  },
+  "local_inference": {
+    "host": "127.0.0.1",
+    "port": 11434,
+    "default_model": "qwen2.5:7b",
+    "coder_model": "qwen2.5-coder:7b"
+  },
+  "evals": {
+    "provider": "litellm",
+    "default_runs": 3
+  }
+}

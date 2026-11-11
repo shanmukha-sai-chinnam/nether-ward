@@ -1,0 +1,37 @@
+# LiteLLM AI Gateway Configuration
+# Unifies local quantized models and cloud frontier models behind standard OpenAI endpoints.
+
+model_list:
+  # ── Local Quantized Models (Intel Lunar Lake AVX-VNNI / Arc GPU) ──────
+  - model_name: local-fast
+    litellm_params:
+      model: ollama/qwen2.5:7b
+      api_base: http://127.0.0.1:11434
+
+  - model_name: local-coder
+    litellm_params:
+      model: ollama/qwen2.5-coder:7b
+      api_base: http://127.0.0.1:11434
+
+  # ── Cloud Frontier Models ─────────────────────────────────────────────
+  - model_name: cloud-fast
+    litellm_params:
+      model: gemini/gemini-2.5-flash
+      api_key: os.environ/GEMINI_API_KEY
+
+  - model_name: cloud-reasoning
+    litellm_params:
+      model: gemini/gemini-2.5-pro
+      api_key: os.environ/GEMINI_API_KEY
+
+router_settings:
+  routing_strategy: latency-based-routing
+  fallbacks:
+    - local-fast: [cloud-fast]
+    - local-coder: [cloud-fast]
+  num_retries: 2
+  timeout: 30
+
+general_settings:
+  master_key: "sk-ai-infra-local"
+  store_model_in_db: false
