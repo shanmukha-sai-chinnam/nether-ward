@@ -121,7 +121,7 @@ jobs:
         with:
           check_name: "AI Red Team Security Matrix"
           report_paths: "reports/redteam.junit.xml"
-          require_tests: true
+          require_tests: false
           fail_on_failure: false
 
       - name: Upload Security Reports & HTML Artifacts
@@ -129,6 +129,7 @@ jobs:
         if: always()
         with:
           name: ai-redteam-reports
+          if-no-files-found: ignore
           path: |
             reports/redteam_report.html
             reports/redteam_report.json

@@ -41,7 +41,8 @@ fi
 exec $PROMPTFOO_BIN eval \
   --config "$CONFIG_FILE" \
   --max-concurrency 2 \
-  --delay 1000 \
+  --no-share \
+  --no-progress-bar \
   --output reports/redteam_report.json \
   --output reports/redteam_report.html \
   --output reports/redteam.junit.xml \
