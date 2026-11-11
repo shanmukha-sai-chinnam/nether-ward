@@ -268,6 +268,31 @@ pub fn redact_secret(s: &str) -> String {
     format!("{prefix}***REDACTED***{suffix}")
 }
 
+/// Sanitize text in-flight by replacing all detected secret leaks with redacted placeholders
+pub fn sanitize_secrets(content: &str) -> (String, usize) {
+    let rules = get_default_rules();
+    let secret_rules: Vec<_> = rules
+        .into_iter()
+        .filter(|r| r.category == RuleCategory::SecretLeak)
+        .collect();
+    let mut sanitized = content.to_string();
+    let mut redactions_count = 0;
+
+    for rule in &secret_rules {
+        if let Ok(re) = Regex::new(&rule.pattern) {
+            sanitized = re
+                .replace_all(&sanitized, |caps: &regex::Captures| {
+                    redactions_count += 1;
+                    let matched = caps.get(0).map(|m| m.as_str()).unwrap_or("");
+                    redact_secret(matched)
+                })
+                .to_string();
+        }
+    }
+
+    (sanitized, redactions_count)
+}
+
 /// Scan string content against all active SAST rules
 pub fn scan_content(content: &str, file_name: Option<&str>) -> Vec<VulnerabilityFinding> {
     let rules = get_default_rules();
@@ -746,5 +771,14 @@ mod tests {
         let sample = "let query = format!(\"SELECT * FROM users WHERE id = '{}'\", user_id);\n// ' OR '1'='1\n";
         let findings = scan_content(sample, Some("db.rs"));
         assert!(findings.iter().any(|f| f.rule_id == "NW-INJ-002"));
+    }
+
+    #[test]
+    fn test_sanitize_secrets() {
+        let text = "My token is AKIAIOSFODNN7EXAMPLE and secret is safe.";
+        let (sanitized, count) = sanitize_secrets(text);
+        assert_eq!(count, 1);
+        assert!(!sanitized.contains("AKIAIOSFODNN7EXAMPLE"));
+        assert!(sanitized.contains("AKIA***REDACTED***MPLE"));
     }
 }

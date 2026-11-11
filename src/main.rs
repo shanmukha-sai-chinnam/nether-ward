@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 mod gateway;
 mod jev;
+mod mcp;
 mod redteam;
 mod sast;
 mod threat;
@@ -65,6 +66,25 @@ enum Commands {
         /// Upstream OpenAI-compatible API base URL (e.g. http://localhost:11434/v1)
         #[arg(long)]
         upstream: Option<String>,
+
+        /// Enable in-flight secret sanitization and masking
+        #[arg(long)]
+        sanitize: bool,
+    },
+
+    /// Audit Model Context Protocol (MCP) server configurations and inspect JSON-RPC messages
+    Mcp {
+        /// Path to MCP configuration file (e.g. .agents/mcp_config.json)
+        #[arg(short, long)]
+        config: Option<PathBuf>,
+
+        /// JSON-RPC message payload string to inspect
+        #[arg(short, long)]
+        inspect: Option<String>,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
     },
 
     /// Run the synthetic AI red team security evaluation matrix
@@ -246,8 +266,70 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             port,
             model,
             upstream,
+            sanitize,
         } => {
-            gateway::run_gateway(port, model, upstream).await?;
+            gateway::run_gateway(port, model, upstream, sanitize).await?;
+        }
+
+        Commands::Mcp {
+            config,
+            inspect,
+            json,
+        } => {
+            if let Some(config_path) = config {
+                if !config_path.exists() {
+                    eprintln!(
+                        "{}: Configuration file '{}' does not exist.",
+                        "Error".red().bold(),
+                        config_path.display()
+                    );
+                    std::process::exit(1);
+                }
+                let report = mcp::audit_mcp_config(&config_path)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    mcp::print_mcp_report(&report, config_path.to_str().unwrap_or("."));
+                }
+                if !report.clean {
+                    std::process::exit(2);
+                }
+            } else if let Some(payload) = inspect {
+                match mcp::inspect_mcp_json_rpc(&payload) {
+                    Ok(()) => {
+                        if json {
+                            println!(r#"{{"status":"clean","inspected":true}}"#);
+                        } else {
+                            println!(
+                                "{}",
+                                "MCP JSON-RPC Payload: Clean (No threat indicators detected)"
+                                    .green()
+                                    .bold()
+                            );
+                        }
+                    }
+                    Err(finding) => {
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&finding)?);
+                        } else {
+                            eprintln!(
+                                "{}: MCP JSON-RPC security violation detected!",
+                                "BLOCKED".red().bold()
+                            );
+                            eprintln!("  Rule:    {} [{}]", finding.title, finding.rule_id);
+                            eprintln!("  Snippet: {}", finding.matched_snippet);
+                            eprintln!("  Fix:     {}", finding.recommendation);
+                        }
+                        std::process::exit(2);
+                    }
+                }
+            } else {
+                eprintln!(
+                    "{}: Please specify either --config <path> or --inspect <json_rpc>.",
+                    "Error".red().bold()
+                );
+                std::process::exit(1);
+            }
         }
 
         Commands::Redteam {

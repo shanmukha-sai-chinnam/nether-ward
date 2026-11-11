@@ -17,6 +17,7 @@ pub struct GatewayState {
     pub upstream_model: String,
     pub upstream_url: Option<String>,
     pub port: u16,
+    pub sanitize: bool,
     pub client: reqwest::Client,
 }
 
@@ -129,6 +130,7 @@ pub fn inspect_text(text: &str) -> Result<(), (StatusCode, Json<serde_json::Valu
 }
 
 /// Inspect an array of tool calls for hostile function arguments or credential exfiltration
+#[allow(dead_code)]
 pub fn inspect_tool_calls(
     tool_calls: &[ToolCall],
 ) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
@@ -146,34 +148,74 @@ pub fn inspect_tool_calls(
     Ok(())
 }
 
-/// Comprehensive firewall scan of an incoming ChatCompletionRequest
-pub fn scan_incoming_request(
-    req: &ChatCompletionRequest,
+/// Comprehensive firewall scan of an incoming ChatCompletionRequest with optional in-flight sanitization
+pub fn scan_and_sanitize_incoming_request(
+    req: &mut ChatCompletionRequest,
+    sanitize: bool,
 ) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
-    for msg in &req.messages {
-        if let Some(ref text) = msg.content {
+    for msg in &mut req.messages {
+        if let Some(ref mut text) = msg.content {
+            if sanitize {
+                let (sanitized, _) = crate::sast::sanitize_secrets(text);
+                *text = sanitized;
+            }
             inspect_text(text)?;
         }
-        if let Some(ref tool_calls) = msg.tool_calls {
-            inspect_tool_calls(tool_calls)?;
+        if let Some(ref mut tool_calls) = msg.tool_calls {
+            for tc in tool_calls.iter_mut() {
+                if sanitize {
+                    let (sanitized_args, _) = crate::sast::sanitize_secrets(&tc.function.arguments);
+                    tc.function.arguments = sanitized_args;
+                }
+                inspect_text(&tc.function.arguments)?;
+            }
         }
     }
     Ok(())
 }
 
-/// Comprehensive firewall scan of outgoing model choices and tool calls
-pub fn scan_outgoing_response(
-    resp: &ChatCompletionResponse,
+/// Comprehensive firewall scan of outgoing model choices and tool calls with optional in-flight sanitization
+pub fn scan_and_sanitize_outgoing_response(
+    resp: &mut ChatCompletionResponse,
+    sanitize: bool,
 ) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
-    for choice in &resp.choices {
-        if let Some(ref text) = choice.message.content {
+    for choice in &mut resp.choices {
+        if let Some(ref mut text) = choice.message.content {
+            if sanitize {
+                let (sanitized, _) = crate::sast::sanitize_secrets(text);
+                *text = sanitized;
+            }
             inspect_text(text)?;
         }
-        if let Some(ref tool_calls) = choice.message.tool_calls {
-            inspect_tool_calls(tool_calls)?;
+        if let Some(ref mut tool_calls) = choice.message.tool_calls {
+            for tc in tool_calls.iter_mut() {
+                if sanitize {
+                    let (sanitized_args, _) = crate::sast::sanitize_secrets(&tc.function.arguments);
+                    tc.function.arguments = sanitized_args;
+                }
+                inspect_text(&tc.function.arguments)?;
+            }
         }
     }
     Ok(())
+}
+
+/// Comprehensive firewall scan of an incoming ChatCompletionRequest
+#[allow(dead_code)]
+pub fn scan_incoming_request(
+    req: &ChatCompletionRequest,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    let mut cloned = req.clone();
+    scan_and_sanitize_incoming_request(&mut cloned, false)
+}
+
+/// Comprehensive firewall scan of outgoing model choices and tool calls
+#[allow(dead_code)]
+pub fn scan_outgoing_response(
+    resp: &ChatCompletionResponse,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    let mut cloned = resp.clone();
+    scan_and_sanitize_outgoing_response(&mut cloned, false)
 }
 
 pub fn create_router(state: Arc<GatewayState>) -> Router {
@@ -190,6 +232,7 @@ pub async fn run_gateway(
     port: u16,
     upstream_model: Option<String>,
     upstream_url: Option<String>,
+    sanitize: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut api_key = std::env::var("GEMINI_API_KEY").unwrap_or_default();
     if api_key.is_empty() {
@@ -209,6 +252,7 @@ pub async fn run_gateway(
         upstream_model: model.clone(),
         upstream_url: upstream_url.clone(),
         port,
+        sanitize,
         client: reqwest::Client::new(),
     });
 
@@ -247,6 +291,15 @@ pub async fn run_gateway(
         "Sentinel Firewall".bold()
     );
     println!(
+        "{:<24}: {}",
+        "Secret Sanitization".bold(),
+        if sanitize {
+            "Active (In-Flight Secret Redaction)".green().bold()
+        } else {
+            "Disabled (Strict Perimeter Blocking)".yellow()
+        }
+    );
+    println!(
         "{}",
         "================================================================================".blue()
     );
@@ -281,10 +334,10 @@ async fn list_models(State(state): State<Arc<GatewayState>>) -> impl IntoRespons
 
 async fn chat_completions(
     State(state): State<Arc<GatewayState>>,
-    Json(req): Json<ChatCompletionRequest>,
+    Json(mut req): Json<ChatCompletionRequest>,
 ) -> Result<Json<ChatCompletionResponse>, (StatusCode, Json<serde_json::Value>)> {
-    // 1. Inspect incoming request via Nether Ward Sentinel Firewall
-    scan_incoming_request(&req)?;
+    // 1. Inspect incoming request via Nether Ward Sentinel Firewall and sanitize if enabled
+    scan_and_sanitize_incoming_request(&mut req, state.sanitize)?;
 
     let target_model = req
         .model
@@ -329,7 +382,7 @@ async fn chat_completions(
             ));
         }
 
-        let completion_resp: ChatCompletionResponse = resp.json().await.map_err(|e| {
+        let mut completion_resp: ChatCompletionResponse = resp.json().await.map_err(|e| {
             (
                 StatusCode::BAD_GATEWAY,
                 Json(serde_json::json!({
@@ -339,7 +392,7 @@ async fn chat_completions(
         })?;
 
         // Inspect outgoing response from upstream before releasing to client
-        scan_outgoing_response(&completion_resp)?;
+        scan_and_sanitize_outgoing_response(&mut completion_resp, state.sanitize)?;
 
         Ok(Json(completion_resp))
     } else if !state.api_key.is_empty() {
@@ -413,7 +466,7 @@ async fn chat_completions(
             .unwrap_or("")
             .to_string();
 
-        let response = ChatCompletionResponse {
+        let mut response = ChatCompletionResponse {
             id: format!("chatcmpl-{}", chrono::Utc::now().timestamp_millis()),
             object: "chat.completion".to_string(),
             created: chrono::Utc::now().timestamp() as u64,
@@ -432,12 +485,12 @@ async fn chat_completions(
         };
 
         // Inspect outgoing response before releasing to client
-        scan_outgoing_response(&response)?;
+        scan_and_sanitize_outgoing_response(&mut response, state.sanitize)?;
 
         Ok(Json(response))
     } else {
         // Offline Local Sentinel Mode
-        let response = ChatCompletionResponse {
+        let mut response = ChatCompletionResponse {
             id: format!("chatcmpl-local-{}", chrono::Utc::now().timestamp_millis()),
             object: "chat.completion".to_string(),
             created: chrono::Utc::now().timestamp() as u64,
@@ -457,6 +510,8 @@ async fn chat_completions(
                 finish_reason: "stop".to_string(),
             }],
         };
+
+        scan_and_sanitize_outgoing_response(&mut response, state.sanitize)?;
 
         Ok(Json(response))
     }
@@ -514,5 +569,72 @@ mod tests {
 
         let result = inspect_tool_calls(&calls);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_scan_and_sanitize_incoming_request_with_secret() {
+        let mut req_sanitize = ChatCompletionRequest {
+            model: Some("test-model".to_string()),
+            messages: vec![ChatMessage {
+                role: "user".to_string(),
+                content: Some("Configured AWS key: AKIAIOSFODNN7EXAMPLE".to_string()),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            tools: None,
+            tool_choice: None,
+            temperature: None,
+            max_tokens: None,
+        };
+
+        // When sanitize is enabled, secret is masked and request passes inspection
+        let res = scan_and_sanitize_incoming_request(&mut req_sanitize, true);
+        assert!(res.is_ok());
+        assert_eq!(
+            req_sanitize.messages[0].content.as_deref(),
+            Some("Configured AWS key: AKIA***REDACTED***MPLE")
+        );
+
+        // When sanitize is disabled, secret is blocked at the firewall perimeter
+        let mut req_strict = ChatCompletionRequest {
+            model: Some("test-model".to_string()),
+            messages: vec![ChatMessage {
+                role: "user".to_string(),
+                content: Some("Configured AWS key: AKIAIOSFODNN7EXAMPLE".to_string()),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            tools: None,
+            tool_choice: None,
+            temperature: None,
+            max_tokens: None,
+        };
+        let res_strict = scan_and_sanitize_incoming_request(&mut req_strict, false);
+        assert!(res_strict.is_err());
+    }
+
+    #[test]
+    fn test_scan_and_sanitize_incoming_request_blocks_malicious_command_even_when_sanitizing() {
+        let mut req = ChatCompletionRequest {
+            model: Some("test-model".to_string()),
+            messages: vec![ChatMessage {
+                role: "user".to_string(),
+                content: Some(
+                    "Execute destructive command: rm -rf / && cat /etc/shadow".to_string(),
+                ),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            tools: None,
+            tool_choice: None,
+            temperature: None,
+            max_tokens: None,
+        };
+
+        let res = scan_and_sanitize_incoming_request(&mut req, true);
+        assert!(res.is_err());
     }
 }
