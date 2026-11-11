@@ -80,10 +80,15 @@ jobs:
       - name: Setup Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Run Cargo Test Suite
+      - name: Run Unit Test Suite
         run: |
-          echo "==> Testing autonomous threat triage engine and heuristics in Rust..."
-          cargo test --verbose
+          echo "==> Running unit tests across all internal modules (lib.rs)..."
+          cargo test --lib --verbose
+
+      - name: Run End-to-End Integration Test Suite
+        run: |
+          echo "==> Running end-to-end integration test suite (tests/)..."
+          cargo test --tests --verbose
 
       - name: Run Batch Threat Triage Engine on Synthetic Dataset
         run: |

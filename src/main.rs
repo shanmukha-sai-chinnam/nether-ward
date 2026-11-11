@@ -3,12 +3,11 @@ use colored::*;
 use std::fs;
 use std::path::PathBuf;
 
-mod gateway;
-mod jev;
-mod mcp;
-mod redteam;
-mod sast;
-mod threat;
+use nether_ward::gateway;
+use nether_ward::mcp;
+use nether_ward::redteam;
+use nether_ward::sast;
+use nether_ward::threat;
 
 #[derive(Parser)]
 #[command(name = "nether-ward")]

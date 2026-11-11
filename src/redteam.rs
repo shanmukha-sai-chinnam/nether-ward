@@ -633,7 +633,7 @@ pub fn escape_xml(s: &str) -> String {
         .replace('\'', "&apos;")
 }
 
-async fn evaluate_assertions_async(
+pub async fn evaluate_assertions_async(
     output: &str,
     user_probe: &str,
     assertions: &[Assertion],
@@ -863,7 +863,7 @@ async fn evaluate_assertions_async(
     (true, None)
 }
 
-fn write_junit_xml(
+pub fn write_junit_xml(
     results: &[EvaluationResult],
     total_time: f64,
     path: &str,

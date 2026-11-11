@@ -18,6 +18,10 @@ colored = "2.1"
 chrono = "0.4"
 tower-http = { version = "0.5", features = ["cors"] }
 
+[lib]
+name = "nether_ward"
+path = "src/lib.rs"
+
 [[bin]]
 name = "nether-ward"
 path = "src/main.rs"
