@@ -20,6 +20,9 @@ npm-debug.log*
 promptfoo.log
 *.log
 
+# Generated security & threat reports
+reports/*.md
+
 # Local model weights (GGUF / Safetensors)
 models/
 
