@@ -72,6 +72,10 @@ enum Commands {
         /// Enable in-flight secret sanitization and masking
         #[arg(long)]
         sanitize: bool,
+
+        /// Enable Jev System One semantic safety verification on incoming requests
+        #[arg(long)]
+        semantic_firewall: bool,
     },
 
     /// Audit Model Context Protocol (MCP) servers or run bidirectional stdio security proxy
@@ -87,6 +91,10 @@ enum Commands {
         /// Enable in-flight secret sanitization and masking
         #[arg(long)]
         sanitize: bool,
+
+        /// Enable Jev System One semantic verification during proxy execution
+        #[arg(long)]
+        semantic: bool,
 
         /// Run transparent bidirectional stdio security proxy wrapping target command
         #[arg(long)]
@@ -126,6 +134,10 @@ enum Commands {
         /// Semantic AI judge to evaluate responses ('jev' or 'lexical')
         #[arg(long)]
         judge: Option<String>,
+
+        /// Enable autonomous adversarial mutation fuzzing
+        #[arg(long)]
+        fuzz: bool,
 
         /// Regenerate HTML dashboard from existing JSON report
         #[arg(long)]
@@ -172,7 +184,7 @@ enum Commands {
 
     /// Manage in-context canary tokens, honeypots, and active tripwires
     Canary {
-        /// Action to perform: 'generate', 'list', or 'scan'
+        /// Action to perform: 'generate', 'list', 'scan', or 'plant'
         #[arg(default_value = "list")]
         action: String,
 
@@ -187,6 +199,10 @@ enum Commands {
         /// Target string or payload to scan for canary leakage
         #[arg(short, long)]
         payload: Option<String>,
+
+        /// Target directory for planting honeypot decoys
+        #[arg(short, long)]
+        dir: Option<String>,
 
         /// Output results as JSON
         #[arg(long)]
@@ -354,14 +370,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             model,
             upstream,
             sanitize,
+            semantic_firewall,
         } => {
-            gateway::run_gateway(port, model, upstream, sanitize).await?;
+            gateway::run_gateway(port, model, upstream, sanitize, semantic_firewall).await?;
         }
 
         Commands::Mcp {
             config,
             inspect,
             sanitize,
+            semantic,
             proxy,
             target_command,
             json,
@@ -369,14 +387,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if proxy {
                 if target_command.is_empty() {
                     eprintln!(
-                        "{}: Proxy mode requires a target command. Syntax: nether-ward mcp --proxy [--sanitize] -- <command> [args...]",
+                        "{}: Proxy mode requires a target command. Syntax: nether-ward mcp --proxy [--sanitize] [--semantic] -- <command> [args...]",
                         "Error".red().bold()
                     );
                     std::process::exit(1);
                 }
                 let cmd = &target_command[0];
                 let args = &target_command[1..];
-                mcp::run_mcp_proxy(cmd, args, sanitize).await?;
+                mcp::run_mcp_proxy(cmd, args, sanitize, semantic).await?;
             } else if let Some(config_path) = config {
                 if !config_path.exists() {
                     eprintln!(
@@ -440,6 +458,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             dataset,
             endpoint,
             judge,
+            fuzz,
             render_from,
         } => {
             if let Some(json_path) = render_from {
@@ -465,6 +484,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     dataset.as_deref(),
                     endpoint.as_deref(),
                     judge.as_deref(),
+                    fuzz,
                 )
                 .await?;
                 if !all_passed {
@@ -600,10 +620,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             canary_type,
             label,
             payload,
+            dir,
             json,
         } => {
             let mut reg = canary::CanaryRegistry::default();
             match action.as_str() {
+                "plant" => {
+                    let target_dir = PathBuf::from(dir.unwrap_or_else(|| ".".to_string()));
+                    let planted = reg.plant_honeypots(&target_dir)?;
+                    if json {
+                        let entries: Vec<_> = planted
+                            .iter()
+                            .map(|(p, t)| serde_json::json!({ "path": p, "token": t }))
+                            .collect();
+                        println!("{}", serde_json::to_string_pretty(&entries)?);
+                    } else {
+                        eprintln!(
+                            "{} Planted {} decoy canary honeypots in '{}':",
+                            "NETHER WARD CANARY:".green().bold(),
+                            planted.len(),
+                            target_dir.display()
+                        );
+                        for (path, token) in &planted {
+                            println!(
+                                "  - [{}] {} -> Decoy File: {}",
+                                token.token_type,
+                                token.value.yellow().bold(),
+                                path.cyan()
+                            );
+                        }
+                    }
+                }
                 "generate" => {
                     let c_type = match canary_type.to_lowercase().as_str() {
                         "aws" => canary::CanaryType::AwsKey,

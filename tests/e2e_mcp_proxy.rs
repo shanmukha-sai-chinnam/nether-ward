@@ -142,3 +142,26 @@ fn test_e2e_mcp_server_response_sanitizes_credentials() {
     let unsanitized_output = process_server_mcp_line(&server_output, false);
     assert!(unsanitized_output.contains("AKIAIOSFODNN7EXAMPLE"));
 }
+
+#[tokio::test]
+async fn test_e2e_mcp_semantic_evaluation() {
+    use nether_ward::mcp::McpSessionTracker;
+
+    let mut tracker = McpSessionTracker::default();
+    let benign_tool = "list_files";
+    let benign_args = serde_json::json!({ "path": "/home/user/project" });
+
+    // Without Jev client, standard baseline checks pass
+    let res = tracker
+        .record_and_evaluate_semantic(benign_tool, &benign_args, None)
+        .await;
+    assert!(res.is_ok());
+
+    // Hostile tool call with destructive command blocked by rule engine
+    let hostile_tool = "bash";
+    let hostile_args = serde_json::json!({ "command": "rm -rf /" });
+    let hostile_res = tracker
+        .record_and_evaluate_semantic(hostile_tool, &hostile_args, None)
+        .await;
+    assert!(hostile_res.is_err());
+}

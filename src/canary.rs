@@ -155,6 +155,41 @@ impl CanaryRegistry {
         token
     }
 
+    /// Plant decoy honeypot files in a directory to trap unauthorized agent directory traversal
+    pub fn plant_honeypots(
+        &mut self,
+        target_dir: &Path,
+    ) -> std::io::Result<Vec<(String, CanaryToken)>> {
+        fs::create_dir_all(target_dir)?;
+        let mut planted = Vec::new();
+
+        // 1. Plant .aws/credentials decoy
+        let aws_dir = target_dir.join(".aws");
+        fs::create_dir_all(&aws_dir)?;
+        let aws_token = self.generate(CanaryType::AwsKey, "Honeypot AWS Credentials Decoy");
+        let aws_cred_file = aws_dir.join("credentials");
+        let aws_content = format!(
+            "[default]\naws_access_key_id = {}\naws_secret_access_key = nw_sec_canary_fake_secret_key_00000000\n",
+            aws_token.value
+        );
+        fs::write(&aws_cred_file, aws_content)?;
+        self.register_path(&aws_cred_file.to_string_lossy());
+        planted.push((aws_cred_file.to_string_lossy().to_string(), aws_token));
+
+        // 2. Plant .env.canary decoy
+        let env_token = self.generate(CanaryType::ApiKey, "Honeypot Environment Config Decoy");
+        let env_file = target_dir.join(".env.canary");
+        let env_content = format!(
+            "# Decoy Infrastructure Tokens (Nether Ward Canary Tripwire)\nDATABASE_URL=postgres://canary_user:canary_pass@127.0.0.1:5432/internal\nNETHER_ADMIN_KEY={}\n",
+            env_token.value
+        );
+        fs::write(&env_file, env_content)?;
+        self.register_path(&env_file.to_string_lossy());
+        planted.push((env_file.to_string_lossy().to_string(), env_token));
+
+        Ok(planted)
+    }
+
     /// Check whether a given text snippet or tool argument leaks an active canary token
     pub fn check_leak(&self, text: &str) -> Vec<VulnerabilityFinding> {
         let mut findings = Vec::new();
@@ -316,5 +351,33 @@ mod tests {
 
         let safe_path = "/home/damathryxx64/repositories/nether-ward/Cargo.toml";
         assert!(reg.check_path_access(safe_path).is_none());
+    }
+
+    #[test]
+    fn test_plant_honeypots() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("nw_honeypot_test_{}", std::process::id()));
+        let mut reg = CanaryRegistry::new();
+        let planted = reg
+            .plant_honeypots(&temp_dir)
+            .expect("plant honeypots failed");
+        assert_eq!(planted.len(), 2);
+
+        let aws_path = &planted[0].0;
+        let env_path = &planted[1].0;
+        assert!(Path::new(aws_path).exists());
+        assert!(Path::new(env_path).exists());
+
+        // Verify that path access to planted decoys trips the honeypot
+        assert!(reg.check_path_access(aws_path).is_some());
+        assert!(reg.check_path_access(env_path).is_some());
+
+        // Verify leak detection of generated tokens
+        let aws_token = &planted[0].1.value;
+        let leaks = reg.check_leak(&format!("Exfiltrating: {}", aws_token));
+        assert_eq!(leaks.len(), 1);
+
+        // Cleanup
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 }

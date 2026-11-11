@@ -260,3 +260,47 @@ fn test_e2e_cli_gate_dual_key_authorization() {
         .expect("Failed to evaluate benign gate command");
     assert!(benign_output.status.success());
 }
+
+#[test]
+fn test_e2e_cli_canary_plant() {
+    let bin = env!("CARGO_BIN_EXE_nether-ward");
+    let temp_dir = std::env::temp_dir().join(format!("canary_plant_test_{}", std::process::id()));
+
+    let output = Command::new(bin)
+        .args([
+            "canary",
+            "plant",
+            "--dir",
+            temp_dir.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("Failed to execute nether-ward canary plant");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json_val: serde_json::Value = serde_json::from_str(&stdout).expect("Valid plant JSON");
+    let arr = json_val.as_array().expect("Array of planted honeypots");
+    assert_eq!(arr.len(), 2);
+
+    // Verify files were physically written
+    let aws_file = temp_dir.join(".aws/credentials");
+    let env_file = temp_dir.join(".env.canary");
+    assert!(aws_file.exists());
+    assert!(env_file.exists());
+
+    // Verify scanning detects the planted token without --json (exit 1 on breach)
+    let token_val = arr[0]["token"]["value"].as_str().expect("Token value");
+    let scan_output = Command::new(bin)
+        .args([
+            "canary",
+            "scan",
+            "--payload",
+            &format!("leaked: {}", token_val),
+        ])
+        .output()
+        .expect("Failed to execute canary scan");
+    assert!(!scan_output.status.success()); // Exit 1 indicates canary compromise caught
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}

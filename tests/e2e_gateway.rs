@@ -16,6 +16,8 @@ async fn spawn_test_gateway(sanitize: bool) -> (String, Arc<GatewayState>) {
         upstream_url: None,
         port: addr.port(),
         sanitize,
+        semantic_firewall: false,
+        jev_client: None,
         client: reqwest::Client::new(),
         metrics: Arc::new(GatewayMetrics::default()),
     });

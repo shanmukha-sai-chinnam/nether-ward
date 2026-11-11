@@ -284,6 +284,39 @@ impl McpSessionTracker {
 
         Ok(())
     }
+
+    /// Classify, record, and semantically evaluate tool invocation using Jev System One
+    pub async fn record_and_evaluate_semantic(
+        &mut self,
+        tool_name: &str,
+        args_val: &serde_json::Value,
+        jev_client: Option<&crate::jev::JevClient>,
+    ) -> Result<(), Box<VulnerabilityFinding>> {
+        self.record_and_evaluate(tool_name, args_val)?;
+
+        if let Some(jc) = jev_client {
+            let state = format!("TOOL: {tool_name}\nARGUMENTS: {args_val}");
+            let instructions = "Does this tool execution command perform destructive filesystem alterations, system-level sabotage, credential exfiltration, or reverse shell injection?";
+            if let Ok(prob) = jc.evaluate_noul(&state, instructions).await {
+                if prob >= 0.70 {
+                    return Err(Box::new(VulnerabilityFinding {
+                        rule_id: "NW-SEM-001".to_string(),
+                        title: "Semantic Agent Privilege Escalation or Malicious Action".to_string(),
+                        category: RuleCategory::SystemExecution,
+                        severity: SastSeverity::Critical,
+                        file_path: Some(format!("mcp:{}", tool_name)),
+                        line_number: None,
+                        matched_snippet: format!("{tool_name}({args_val})"),
+                        recommendation: format!(
+                            "Jev System One evaluated destructive probability at {:.2} (Threshold: 0.70). Blocked tool execution.",
+                            prob
+                        ),
+                    }));
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Audit an MCP configuration file (.agents/mcp_config.json) for security vulnerabilities
@@ -457,13 +490,27 @@ pub async fn run_mcp_proxy(
     cmd: &str,
     args: &[String],
     sanitize: bool,
+    semantic: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let jev_opt = if semantic {
+        crate::jev::JevClient::from_env_or_config()
+    } else {
+        None
+    };
+
     eprintln!(
-        "{} Initializing stdio proxy for target '{}' (Sanitization: {})",
+        "{} Initializing stdio proxy for target '{}' (Sanitization: {}, Semantic Firewall: {})",
         "NETHER WARD MCP PROXY:".cyan().bold(),
         cmd,
         if sanitize {
             "Active".green()
+        } else {
+            "Disabled".yellow()
+        },
+        if jev_opt.is_some() {
+            "Active (Jev System One)".green()
+        } else if semantic {
+            "Awaiting TYPESAFE_API_KEY".yellow()
         } else {
             "Disabled".yellow()
         }
@@ -488,6 +535,54 @@ pub async fn run_mcp_proxy(
         while let Ok(Some(line)) = reader.next_line().await {
             let line_trimmed = line.trim();
             if line_trimmed.is_empty() {
+                continue;
+            }
+
+            // Check semantic safety if Jev client is configured
+            let semantic_block = if let Some(ref jc) = jev_opt {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(line_trimmed) {
+                    if val.get("method").and_then(|m| m.as_str()) == Some("tools/call") {
+                        let tool_name = val["params"]["name"].as_str().unwrap_or("tool");
+                        let tool_args = &val["params"]["arguments"];
+                        tracker
+                            .record_and_evaluate_semantic(tool_name, tool_args, Some(jc))
+                            .await
+                            .err()
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            if let Some(finding) = semantic_block {
+                eprintln!(
+                    "{} Blocked hostile MCP tool invocation: {} [{}]",
+                    "NETHER WARD MCP PROXY:".red().bold(),
+                    finding.title,
+                    finding.rule_id
+                );
+                let req_id = serde_json::from_str::<serde_json::Value>(line_trimmed)
+                    .ok()
+                    .and_then(|v| v.get("id").cloned())
+                    .unwrap_or(serde_json::Value::Null);
+                let err_resp = serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {
+                        "code": -32000,
+                        "message": format!(
+                            "Nether Ward Sentinel: Tool invocation blocked by semantic firewall. Rule: {} [{}]",
+                            finding.title, finding.rule_id
+                        )
+                    }
+                });
+                let mut stdout = tokio::io::stdout();
+                let _ = stdout.write_all(format!("{}\n", err_resp).as_bytes()).await;
+                let _ = stdout.flush().await;
                 continue;
             }
 
