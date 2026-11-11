@@ -7,7 +7,10 @@
     "eval": "./bin/eval",
     "eval:view": "npx promptfoo view",
     "gateway": "./bin/gateway",
-    "inference": "./bin/inference"
+    "inference": "./bin/inference",
+    "redteam": "./bin/redteam",
+    "redteam:view": "npx promptfoo view -p 15500",
+    "threat:analyze": "./bin/analyze-threat"
   },
   "dependencies": {
     "promptfoo": "^0.125.1"

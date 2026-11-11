@@ -1,0 +1,136 @@
+name: AI Infrastructure & Synthetic Red Team CI/CD
+
+on:
+  push:
+    branches:
+      - trunk
+      - main
+  pull_request:
+    branches:
+      - trunk
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+jobs:
+  validate:
+    name: Validate Infrastructure Configs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Validate JSON Schemas
+        run: |
+          echo "==> Validating values.json declarative configuration..."
+          jq empty values.json
+          echo "==> Validating package.json..."
+          jq empty package.json
+
+      - name: Validate Shell Script Syntax
+        run: |
+          echo "==> Verifying shell script syntax across bin/..."
+          bash -n bin/gateway bin/inference bin/eval bin/analyze-threat bin/redteam
+          echo "All shell scripts passed syntax check."
+
+  secret-scan:
+    name: Static Secret & Credential Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Scan Tracked Files for Leaked Credentials
+        run: |
+          echo "==> Scanning tracked files for exposed API keys and sensitive tokens..."
+          EXPOSED_KEYS=$(git grep -En '(AIzaSy[A-Za-z0-9_-]{33}|AQ\.[A-Za-z0-9_-]{40,}|sk-[A-Za-z0-9]{20,})' \
+            -- ':!config/redteam_config.yaml' ':!*.md' || true)
+          if [ -n "$EXPOSED_KEYS" ]; then
+            echo "::error::Potential unmasked credential detected in git repository:"
+            echo "$EXPOSED_KEYS"
+            exit 1
+          fi
+          echo "No exposed credentials detected. Static security check passed."
+
+  threat-triage-unit:
+    name: Threat Triage Engine Heuristics
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run Heuristics & Static Feature Tests
+        run: |
+          echo "==> Testing autonomous threat triage engine static heuristics..."
+          PYTHONPATH=. python3 -c "
+          from src.threat_analyzer import calculate_entropy, extract_strings
+          assert calculate_entropy(b'AAAAAAA') == 0.0, 'Zero entropy test failed'
+          assert calculate_entropy(bytes(range(256))) == 8.0, 'Max entropy test failed'
+          extracted = extract_strings(b'PayloadHeader\x00\x01\x02TargetCommand\x00')
+          assert 'PayloadHeader' in extracted, 'Header extraction failed'
+          assert 'TargetCommand' in extracted, 'Target extraction failed'
+          print('Threat analyzer static heuristics verified: Entropy calculation and string extraction functional.')
+          "
+
+  ai-redteam-eval:
+    name: Synthetic Red Team (OWASP Top 10 for LLMs)
+    runs-on: ubuntu-latest
+    needs: [validate, secret-scan, threat-triage-unit]
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - name: Install Dependencies
+        run: npm ci || npm install --no-audit
+
+      - name: Run Synthetic Red Team Evaluation
+        id: redteam
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PROMPTFOO_DISABLE_TELEMETRY: "1"
+        run: |
+          if [ -z "${GEMINI_API_KEY:-}" ]; then
+            echo "::error::GEMINI_API_KEY secret is not configured in GitHub repository."
+            echo "Add GEMINI_API_KEY to Repository Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+          echo "==> Starting OWASP Top 10 for LLMs Synthetic Red Team Evaluation..."
+          # ./bin/redteam outputs redteam_report.json, redteam_report.html, and redteam.junit.xml
+          ./bin/redteam
+        # Allow exit code 100 (assertions failed / vulnerabilities detected) so reports and artifacts publish
+        continue-on-error: true
+
+      - name: Publish Test Results to GitHub Checks
+        uses: mikepenz/action-junit-report@v4
+        if: always()
+        with:
+          check_name: "AI Red Team Security Matrix"
+          report_paths: "reports/redteam.junit.xml"
+          require_tests: true
+          fail_on_failure: false
+
+      - name: Upload Security Reports & HTML Artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ai-redteam-reports
+          path: |
+            reports/redteam_report.html
+            reports/redteam_report.json
+            reports/redteam.junit.xml
+          retention-days: 30

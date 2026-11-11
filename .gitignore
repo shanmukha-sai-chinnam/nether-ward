@@ -21,7 +21,8 @@ promptfoo.log
 *.log
 
 # Generated security & threat reports
-reports/*.md
+reports/*
+!reports/.gitkeep
 
 # Local model weights (GGUF / Safetensors)
 models/
