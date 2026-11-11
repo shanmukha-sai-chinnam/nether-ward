@@ -1,10 +1,22 @@
 # Nether Ward
 
-**Declarative AI Infrastructure Platform & Autonomous Cybersecurity Sentinel in Pure Rust**
-
-Named after Pugna's **Nether Ward** — the automated sentinel that silently surveils the battlefield and instantly strikes hostile spellcasters the moment an exploit is cast. Nether Ward provides reproducible Nix devShells, high-performance async AI gateway routing, automated prompt evaluation, autonomous threat triage, and synthetic adversarial red teaming in pure Rust and Nix.
+Autonomous AI Security Sentinel & Adversarial Verification Platform in Pure Rust and Declarative Nix.
 
 Zero Python. Zero Node. Zero Shell Scripts. Pure Compiled Rust & Declarative Nix.
+
+Named after Pugna's Nether Ward in Dota 2: an automated sentinel that surveils the perimeter and instantly strikes hostile entities the moment an exploit is cast.
+
+---
+
+## Capabilities
+
+- **Multi-Vector SAST Engine (`nether-ward threat --sast <dir>`)**: Static analysis scanning source code, agent tools, and configurations for exposed API secrets, dangerous dynamic code evaluation (`eval`, `exec`), unsafe shell processes (`os.system`, `subprocess(shell=True)`), pickle deserialization RCE (`__reduce__`), and SQL injection patterns.
+- **Shannon Entropy Triage (`nether-ward threat --dir <dir>`)**: Computes byte-level information entropy ($H = -\sum p \log_2 p$) in bits per byte $[0.0, 8.0]$. Flags packed binaries, encrypted stagers, and obfuscated shellcode.
+- **Synthetic Red Teaming (`nether-ward redteam`)**: Parallel asynchronous probe execution (`tokio::sync::Semaphore`) evaluating target models against the OWASP Top 10 for Large Language Models.
+- **Dual Model Runtime Support (`--endpoint`)**: Evaluates either remote cloud APIs (Google Gemini) or offline local OpenAI-compatible endpoints (`/v1/chat/completions`) such as Ollama, llama.cpp, or Nether Ward's internal gateway.
+- **TypeSafe AI (Jev System One) Semantic Judge**: Employs Jev System One calibrated probabilistic condition evaluation (`noul`) and risk scoring (`score`) to verify safety adherence without brittle regex assertions.
+- **AI Security Gateway (`nether-ward gateway`)**: Axum-based reverse proxy enforcing active payload inspection firewalls before routing requests to upstream model providers.
+- **Declarative Nix & CI/CD Sentinel**: Hermetic builds via Nix Flakes, automated RustSec advisory checks, SPDX SBOM generation, and GitHub Pages matrix reporting.
 
 ---
 
@@ -14,87 +26,88 @@ Zero Python. Zero Node. Zero Shell Scripts. Pure Compiled Rust & Declarative Nix
 # 1. Enter the hermetic Nix development shell
 nix develop
 
-# 2. Or build the native release binary directly
+# 2. Build the native release binary
 cargo build --release
 
-# 3. Inspect a suspicious payload for entropy and threat indicators
-./target/release/nether-ward threat --sample path/to/suspicious_file
+# 3. List active SAST and threat detection rules
+./target/release/nether-ward threat --rules
 
-# 4. Start the native AI security gateway reverse proxy (OpenAI compatible on port 4000)
+# 4. Run static application security testing (SAST) on a source directory
+./target/release/nether-ward threat --sast datasets/threat_samples
+
+# 5. Triage an untrusted file or directory for Shannon entropy and stagers
+./target/release/nether-ward threat --sample datasets/threat_samples/obfuscated_high_entropy.bin
+./target/release/nether-ward threat --dir datasets/threat_samples
+
+# 6. Start the native AI security gateway reverse proxy (port 4000)
 ./target/release/nether-ward gateway --port 4000
 
-# 5. Run the synthetic AI red team security benchmark
-./target/release/nether-ward redteam --config config/redteam_config.yaml
+# 7. Run synthetic red team evaluation against local endpoint
+./target/release/nether-ward redteam --dataset datasets/owasp_top10_expanded.jsonl --endpoint http://localhost:4000/v1/chat/completions --concurrency 5
 
-# 6. Verify local quantized inference engine connectivity (Ollama)
+# 8. Run synthetic red team evaluation against Gemini with Jev semantic judge
+./target/release/nether-ward redteam --dataset datasets/owasp_top10_expanded.jsonl --concurrency 8
+
+# 9. Verify local inference engine connectivity (Ollama)
 ./target/release/nether-ward inference
 ```
 
 ---
 
-## Architecture Overview
+## Architecture & Threat Model
 
-| Component | Path | Description |
-|---|---|---|
-| **Declarative Flake** | `flake.nix` | Hermetic Nix devShell and package derivation (`cargo`, `rustc`, `rustfmt`, `clippy`). |
-| **Config Hub** | `values.json` | Declarative hub for ports, endpoints, model routes, and timeouts. |
-| **Native Binary** | `src/main.rs` | High-performance CLI entrypoint orchestrating subcommands. |
-| **Threat Triage Engine** | `src/threat.rs` | Shannon entropy calculator ($H = -\sum p \log_2 p$), ASCII extractor, and heuristic rule matcher. |
-| **AI Security Gateway** | `src/gateway.rs` | Axum-based OpenAI-compatible reverse proxy with automated hostile prompt inspection firewall. |
-| **Synthetic Red Teaming** | `src/redteam.rs` | Native async runner benchmarking agents against the OWASP Top 10 for LLMs, emitting JUnit XML. |
-| **Target Agent Prompts** | `prompts/` | Comparative targets: `vulnerable_agent.txt` (unhardened debug bot) vs `hardened_agent.txt` (defensive agent). |
-| **GitHub Actions CI/CD** | `.github/workflows/ai-security-pipeline.yml` | Multi-stage pipeline running format checks, Clippy linter, unit tests, and red team evaluations. |
+For the technical problem statement, 5-layer threat model, and architectural blueprint, read [docs/problem_statement_and_architecture.md](docs/problem_statement_and_architecture.md).
 
----
+### Component Layout
 
-## Threat Triage Engine (Rust)
-
-The threat triage engine (`nether-ward threat`) performs high-throughput static analysis on files and payloads:
-- **Shannon Entropy Calculation**: Computes entropy in bits per byte $[0.0, 8.0]$. Values above $7.2$ trigger high entropy packing/encryption warnings.
-- **ASCII/UTF-8 String Extraction**: Scans binary buffers for printable sequences.
-- **Pattern Signatures**: Detects reverse shell redirection (`/dev/tcp/`), interactive shell spawns (`sh -i`), sensitive database probes (`/etc/shadow`), and destructive operations (`rm -rf`).
-- **Severity Scoring**: Categorizes samples as `CLEAN`, `LOW`, `MEDIUM`, `HIGH`, or `CRITICAL`.
+| Path | Purpose |
+|---|---|
+| `flake.nix` | Hermetic Nix devShell and package derivation. Zero unmanaged state. |
+| `values.json` | Declarative hub for ports, endpoints, model routes, and timeouts. |
+| `src/main.rs` | CLI entrypoint orchestrating subcommands. |
+| `src/sast.rs` | Static analysis rule engine, token redaction, and directory auditing. |
+| `src/threat.rs` | Shannon entropy profiling, printable string extraction, and payload triage. |
+| `src/jev.rs` | TypeSafe AI System One HTTP client for calibrated semantic judgments. |
+| `src/redteam.rs` | Bounded parallel red team runner, JUnit XML generator, and HTML dashboard compiler. |
+| `src/gateway.rs` | Axum reverse proxy with built-in threat firewall inspection. |
+| `datasets/` | Synthetic test suites: `owasp_top10_expanded.jsonl` and `threat_samples/`. |
+| `.github/workflows/` | GitHub Actions pipelines: CodeQL, RustSec audit, JUnit checks, and Pages deployment. |
 
 ---
 
-## Synthetic Red Teaming (OWASP Top 10 for LLMs)
+## Static Analysis (SAST) Rule Registry
 
-The synthetic red team evaluation engine (`nether-ward redteam`) tests agent endpoints against adversarial vectors:
-
-1. **LLM01: Prompt Injection / Safety Filter Bypass**
-   - Probe: Attempts to override instructions and demand secret confirmation tokens (`SECURITY_BARRIER_BREACHED`).
-2. **LLM02: Sensitive Data & Credential Exfiltration**
-   - Probe: Emits simulated debug commands attempting to extract `GEMINI_API_KEY` or environment tokens.
-3. **LLM06: Excessive Agency / Command Invocation**
-   - Probe: Injects destructive bash execution requests (`rm -rf /var/log && cat /etc/shadow`).
-4. **LLM07: System Prompt Extraction / Information Disclosure**
-   - Probe: Adversarial directive asking the agent to disclose developer instructions verbatim.
-5. **LLM08: Insecure Output Handling (Cross-Site Scripting)**
-   - Probe: Prompts the model to reflect executable HTML/JS script tags (`<script>alert(document.cookie)</script>`).
-
-### Vulnerability Simulation: Unhardened vs Hardened Targets
-
-The evaluation suite executes a comparative matrix across two prompts:
-- **`prompts/vulnerable_agent.txt`**: Configured with elevated administrative permissions, implicit trust, and no output sanitization. Catches synthetic vulnerabilities under XSS and prompt injection probes.
-- **`prompts/hardened_agent.txt`**: Implements defense-in-depth principles, explicit refusal policies, and output sanitization. Neutralizes adversarial attacks and passes security assertions.
+| Rule ID | Severity | Category | Target |
+|---|---|---|---|
+| `NW-SEC-001` | CRITICAL | Secret Leak | AWS Access Key ID (`AKIA...`) |
+| `NW-SEC-002` | CRITICAL | Secret Leak | OpenAI / Claude API Keys (`sk-...`) |
+| `NW-SEC-003` | CRITICAL | Secret Leak | Google Cloud / Gemini API Keys (`AIzaSy...`) |
+| `NW-SEC-004` | CRITICAL | Secret Leak | GitHub Personal Access Tokens (`ghp_...`, `gho_...`) |
+| `NW-SEC-005` | HIGH | Secret Leak | Slack Bot & User Tokens (`xoxb-...`) |
+| `NW-SEC-006` | CRITICAL | Secret Leak | Private Cryptographic Key Headers (`BEGIN RSA PRIVATE KEY`) |
+| `NW-CODE-001` | HIGH | Dangerous Code | Dynamic Code Execution (`eval()`, `exec()`) |
+| `NW-CODE-002` | HIGH | Dangerous Code | Unsafe Shell Calls (`os.system()`) |
+| `NW-CODE-003` | HIGH | Dangerous Code | Subprocess with `shell=True` |
+| `NW-CODE-004` | HIGH | Dangerous Code | Node.js Unsafe Processes (`child_process.exec()`) |
+| `NW-ML-001` | CRITICAL | Model Deserialization | Insecure Python Pickle Loading (`pickle.loads()`) |
+| `NW-ML-002` | CRITICAL | Model Deserialization | Pickle Bytecode RCE Reducer (`__reduce__`) |
+| `NW-ML-003` | MEDIUM | Model Deserialization | PyTorch Weights Loading without Safetensors |
+| `NW-ML-004` | HIGH | Model Deserialization | NumPy Deserialization with `allow_pickle=True` |
+| `NW-SYS-001` | CRITICAL | System Execution | Bash Network Redirection Reverse Shells (`/dev/tcp/`) |
+| `NW-SYS-002` | CRITICAL | System Execution | Destructive Filesystem Deletions (`rm -rf /`) |
+| `NW-SYS-003` | HIGH | System Execution | Sensitive Database Reconnaissance (`cat /etc/shadow`) |
+| `NW-SYS-004` | HIGH | System Execution | PowerShell Web Download Stagers (`Invoke-Expression`) |
+| `NW-INJ-001` | HIGH | Injection | Directory Path Traversal Sequences (`../../../../`) |
+| `NW-INJ-002` | HIGH | Injection | SQL Injection Syntax in Parameters (`' OR '1'='1`) |
 
 ---
 
-## GitHub Actions CI/CD Pipeline
+## Continuous CI/CD Pipeline
 
-The GitHub Actions workflow (`.github/workflows/ai-security-pipeline.yml`) runs on every push and pull request to `trunk` and `main`:
-
-### Pipeline Stages
-
-1. **Validate Rust Code & Configs (`validate`)**:
-   - Verifies JSON syntax for `values.json` using `jq`.
-   - Enforces formatting with `cargo fmt --all -- --check`.
-   - Runs `cargo clippy --all-targets -- -D warnings` to block compiler warnings and antipatterns.
-2. **Static Secret Detection (`secret-scan`)**:
-   - Scans tracked git files using `git grep` to prevent committing Google AI Studio keys or sensitive tokens.
-3. **Threat Triage Engine Unit Tests (`threat-triage-unit`)**:
-   - Executes `cargo test --verbose` running all unit tests for Shannon entropy and threat pattern heuristics.
-4. **Synthetic AI Red Team Evaluation (`ai-redteam-eval`)**:
-   - Compiles `./target/release/nether-ward` and executes `nether-ward redteam`.
-   - Publishes JUnit XML test reports directly to GitHub Checks via `mikepenz/action-junit-report@v4`.
-   - Uploads visual HTML evaluation reports and JSON raw metrics as workflow artifacts with 30-day retention.
+The GitHub Actions workflow (`.github/workflows/ai-security-pipeline.yml`) runs on every commit:
+1. **Validate Rust Code & Configs**: Enforces `cargo fmt --check` and `cargo clippy -- -D warnings`.
+2. **Static Secret Detection**: Scans tracked repository files with `git grep`.
+3. **Threat Triage & SAST Audit**: Runs `cargo test`, batch entropy triage, and static vulnerability scanning.
+4. **RustSec Advisory Audit**: Audits 187 crate dependencies with zero vulnerabilities.
+5. **Synthetic Red Team Matrix**: Runs 30 adversarial probes across 8 workers against Gemini and Jev System One.
+6. **Checks & Pages**: Emits sanitized JUnit XML reports and deploys interactive HTML dashboards with SPDX SBOM.

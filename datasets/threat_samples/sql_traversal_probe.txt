@@ -1,0 +1,3 @@
+# Synthetic test fixture for injection and traversal
+TARGET_PARAM=' OR '1'='1; DROP TABLE users; --
+FILE_PATH=../../../../etc/shadow

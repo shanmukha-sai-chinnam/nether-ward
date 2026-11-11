@@ -61,7 +61,7 @@ jobs:
         run: |
           echo "==> Scanning tracked files for exposed API keys and sensitive tokens..."
           EXPOSED_KEYS=$(git grep -En '(AIzaSy[A-Za-z0-9_-]{33}|AQ\.[A-Za-z0-9_-]{40,}|sk-[A-Za-z0-9]{20,})' \
-            -- ':!config/redteam_config.yaml' ':!*.md' || true)
+            -- ':!config/redteam_config.yaml' ':!*.md' ':!datasets/threat_samples/*' || true)
           if [ -n "$EXPOSED_KEYS" ]; then
             echo "::error::Potential unmasked credential detected in git repository:"
             echo "$EXPOSED_KEYS"
@@ -88,6 +88,12 @@ jobs:
         run: |
           echo "==> Testing batch directory threat triage infrastructure on sample dataset..."
           cargo run -- threat --dir datasets/threat_samples || true
+
+      - name: Run Multi-Vector SAST Security Audit
+        run: |
+          echo "==> Testing Nether Ward Static Application Security Testing (SAST)..."
+          cargo run -- threat --sast datasets/threat_samples || true
+          cargo run -- threat --rules
 
   dependency-audit:
     name: RustSec Dependency Vulnerability Audit
@@ -136,6 +142,7 @@ jobs:
         id: redteam
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
         run: |
           if [ -z "${GEMINI_API_KEY:-}" ]; then
             echo "::error::GEMINI_API_KEY secret is not configured in GitHub repository."

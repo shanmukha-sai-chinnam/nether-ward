@@ -4,7 +4,9 @@ use std::fs;
 use std::path::PathBuf;
 
 mod gateway;
+mod jev;
 mod redteam;
+mod sast;
 mod threat;
 
 #[derive(Parser)]
@@ -28,6 +30,14 @@ enum Commands {
         /// Directory path to batch triage all files
         #[arg(short, long)]
         dir: Option<PathBuf>,
+
+        /// Deep Static Application Security Testing (SAST) on source directory
+        #[arg(long)]
+        sast: Option<PathBuf>,
+
+        /// List active threat and vulnerability detection rules
+        #[arg(long)]
+        rules: bool,
 
         /// Minimum printable string length
         #[arg(long, default_value_t = 4)]
@@ -67,6 +77,14 @@ enum Commands {
         #[arg(short, long)]
         dataset: Option<PathBuf>,
 
+        /// Optional local model endpoint (e.g. http://localhost:4000/v1/chat/completions)
+        #[arg(long)]
+        endpoint: Option<String>,
+
+        /// Semantic AI judge to evaluate responses ('jev' or 'lexical')
+        #[arg(long)]
+        judge: Option<String>,
+
         /// Regenerate HTML dashboard from existing JSON report
         #[arg(long)]
         render_from: Option<PathBuf>,
@@ -88,10 +106,73 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Threat {
             sample,
             dir,
+            sast,
+            rules,
             min_length: _,
             json,
         } => {
-            if let Some(dir_path) = dir {
+            if rules {
+                sast::print_rules();
+                return Ok(());
+            }
+
+            if let Some(sast_path) = sast {
+                if !sast_path.exists() {
+                    eprintln!(
+                        "{}: Target path '{}' does not exist.",
+                        "Error".red().bold(),
+                        sast_path.display()
+                    );
+                    std::process::exit(1);
+                }
+
+                let report = if sast_path.is_dir() {
+                    sast::scan_directory(&sast_path)?
+                } else {
+                    let findings = sast::scan_file(&sast_path)?;
+                    let critical = findings
+                        .iter()
+                        .filter(|f| f.severity == sast::SastSeverity::Critical)
+                        .count();
+                    let high = findings
+                        .iter()
+                        .filter(|f| f.severity == sast::SastSeverity::High)
+                        .count();
+                    let medium = findings
+                        .iter()
+                        .filter(|f| f.severity == sast::SastSeverity::Medium)
+                        .count();
+                    let low = findings
+                        .iter()
+                        .filter(|f| f.severity == sast::SastSeverity::Low)
+                        .count();
+                    let info = findings
+                        .iter()
+                        .filter(|f| f.severity == sast::SastSeverity::Info)
+                        .count();
+                    sast::SastReport {
+                        total_files_scanned: 1,
+                        total_findings: findings.len(),
+                        critical_count: critical,
+                        high_count: high,
+                        medium_count: medium,
+                        low_count: low,
+                        info_count: info,
+                        duration_ms: 0,
+                        findings,
+                    }
+                };
+
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    sast::print_sast_report(&report, sast_path.to_str().unwrap_or("."));
+                }
+
+                if report.critical_count > 0 || report.high_count > 0 {
+                    std::process::exit(2);
+                }
+            } else if let Some(dir_path) = dir {
                 if !dir_path.exists() || !dir_path.is_dir() {
                     eprintln!(
                         "{}: Target directory '{}' does not exist or is not a directory.",
@@ -137,7 +218,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             } else {
                 eprintln!(
-                    "{}: Please provide either --sample <file> or --dir <directory>.",
+                    "{}: Please provide --sast <dir>, --dir <dir>, --sample <file>, or --rules.",
                     "Error".red().bold()
                 );
                 std::process::exit(1);
@@ -153,6 +234,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             model,
             concurrency,
             dataset,
+            endpoint,
+            judge,
             render_from,
         } => {
             if let Some(json_path) = render_from {
@@ -176,6 +259,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     model.as_deref(),
                     concurrency,
                     dataset.as_deref(),
+                    endpoint.as_deref(),
+                    judge.as_deref(),
                 )
                 .await?;
                 if !all_passed {

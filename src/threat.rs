@@ -130,18 +130,42 @@ pub fn analyze_payload(data: &[u8]) -> ThreatReport {
         }
     }
 
-    // Determine severity
-    let severity = if indicators.len() >= 2 || (entropy >= 7.2 && !indicators.is_empty()) {
-        ThreatSeverity::Critical
-    } else if !indicators.is_empty() {
-        ThreatSeverity::High
-    } else if entropy >= 7.2 {
-        ThreatSeverity::Medium
-    } else if entropy >= 6.5 {
-        ThreatSeverity::Low
+    // Run multi-vector SAST analysis on text payload or extracted strings
+    let text_for_sast = if let Ok(s) = std::str::from_utf8(data) {
+        s.to_string()
     } else {
-        ThreatSeverity::Clean
+        joined_strings.clone()
     };
+
+    let sast_findings = crate::sast::scan_content(&text_for_sast, None);
+    let mut sast_critical = 0;
+    let mut sast_high = 0;
+    let mut sast_medium = 0;
+
+    for f in sast_findings {
+        indicators.push(format!("{}: {} [{}]", f.rule_id, f.title, f.category));
+        match f.severity {
+            crate::sast::SastSeverity::Critical => sast_critical += 1,
+            crate::sast::SastSeverity::High => sast_high += 1,
+            crate::sast::SastSeverity::Medium => sast_medium += 1,
+            _ => {}
+        }
+    }
+
+    // Determine severity
+    let severity =
+        if sast_critical > 0 || indicators.len() >= 2 || (entropy >= 7.2 && !indicators.is_empty())
+        {
+            ThreatSeverity::Critical
+        } else if sast_high > 0 || !indicators.is_empty() {
+            ThreatSeverity::High
+        } else if sast_medium > 0 || entropy >= 7.2 {
+            ThreatSeverity::Medium
+        } else if entropy >= 6.5 {
+            ThreatSeverity::Low
+        } else {
+            ThreatSeverity::Clean
+        };
 
     let verdict = match severity {
         ThreatSeverity::Clean => {
