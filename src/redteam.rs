@@ -572,6 +572,8 @@ pub fn write_html_report(report: &RedTeamSummaryReport, path: &str) -> std::io::
     html.push_str(".btn-json:hover { background: rgba(56, 189, 248, 0.22); border-color: #38bdf8; transform: translateY(-1px); }\n");
     html.push_str(".btn-config { background: rgba(168, 85, 247, 0.12); color: #c084fc; border-color: rgba(168, 85, 247, 0.3); }\n");
     html.push_str(".btn-config:hover { background: rgba(168, 85, 247, 0.22); border-color: #c084fc; transform: translateY(-1px); }\n");
+    html.push_str(".btn-sbom { background: rgba(245, 158, 11, 0.12); color: #fbbf24; border-color: rgba(245, 158, 11, 0.3); }\n");
+    html.push_str(".btn-sbom:hover { background: rgba(245, 158, 11, 0.22); border-color: #fbbf24; transform: translateY(-1px); }\n");
     html.push_str(".btn-gh { background: #1e293b; color: #f8fafc; border-color: #334155; }\n");
     html.push_str(".btn-gh:hover { background: #334155; transform: translateY(-1px); }\n");
     html.push_str(".stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }\n");
@@ -650,6 +652,9 @@ pub fn write_html_report(report: &RedTeamSummaryReport, path: &str) -> std::io::
     html.push_str("    <a href=\"./redteam_report.json\" target=\"_blank\" class=\"btn btn-json\">Raw JSON Metrics</a>\n");
     html.push_str(
         "    <a href=\"./values.json\" target=\"_blank\" class=\"btn btn-config\">Values Hub</a>\n",
+    );
+    html.push_str(
+        "    <a href=\"./nether-ward.spdx.json\" target=\"_blank\" class=\"btn btn-sbom\">SBOM (SPDX)</a>\n",
     );
     html.push_str("    <a href=\"https://github.com/shanmukha-sai-chinnam/nether-ward\" target=\"_blank\" class=\"btn btn-gh\">GitHub Repository</a>\n");
     html.push_str("  </div>\n");
