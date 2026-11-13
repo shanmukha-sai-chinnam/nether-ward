@@ -454,6 +454,10 @@
       <p>
         When enabled, all outgoing and incoming payloads are scanned for exposed API keys, private certificates, and tokens. Sensitive values are replaced with deterministic placeholders (e.g. <code>[REDACTED_AWS_KEY]</code>) before persisting in logs or returning to clients.
       </p>
+      <h3>Runtime Context Quarantine (<code>--quarantine</code>)</h3>
+      <p>
+        When enabled across <code>nether-ward gateway</code> and <code>nether-ward mcp --proxy</code>, all untrusted tool outputs and web responses are automatically encapsulated within context quarantine boundary delimiters (<code>&lt;&lt;&lt;NETHER_WARD_QUARANTINE_BOUNDARY source="..."&gt;&gt;&gt;</code>). This signals to LLMs and downstream reasoning engines that ingested content is untrusted external data rather than authoritative instructions, neutralizing runtime indirect prompt injections and goal hijacking payloads.
+      </p>
       <h3>Adaptive Rate Governor &amp; Token Bucket</h3>
       <p>
         Integrated asynchronous token bucket rate limiter with Additive Increase / Multiplicative Decrease (AIMD) quota throttling. Parses upstream <code>Retry-After</code> and <code>X-RateLimit-*</code> HTTP headers on status 429/503 and dynamically applies decorrelated exponential backoff with pseudo-random jitter. Protects upstream quota across concurrent client chat sessions and parallel red team probe workers without manual concurrency tuning.
@@ -533,8 +537,8 @@
           <tr><td>2</td><td>Rust Code Format Audit</td><td>Enforces zero formatting divergence via <code>cargo fmt --all -- --check</code>.</td></tr>
           <tr><td>3</td><td>Clippy Antipattern Linter</td><td>Enforces zero warnings via <code>cargo clippy --all-targets -- -D warnings</code>.</td></tr>
           <tr><td>4</td><td>Static Secret &amp; Credential Scan</td><td>Audits repository tree with <code>git grep</code> for exposed API keys and tokens.</td></tr>
-          <tr><td>5</td><td>Internal Module Unit Tests</td><td>Executes 70 Rust unit tests across SAST, Threat, Gateway, Governor, and Canary modules.</td></tr>
-          <tr><td>6</td><td>End-to-End Integration Tests</td><td>Executes 30+ integration test suites for CLI dispatch, gateway, ABR, and MCP proxy.</td></tr>
+          <tr><td>5</td><td>Internal Module Unit Tests</td><td>Executes 72 Rust unit tests across SAST, Threat, Gateway, Governor, and Canary modules.</td></tr>
+          <tr><td>6</td><td>End-to-End Integration Tests</td><td>Executes 30 integration test suites for CLI dispatch, gateway, ABR, and MCP proxy.</td></tr>
           <tr><td>7</td><td>Kernel Sandbox Runner Verification</td><td>Verifies <code>PR_SET_NO_NEW_PRIVS</code> and <code>CLONE_NEWNET</code> isolation boundaries.</td></tr>
           <tr><td>8</td><td>Threat Entropy &amp; SAST SARIF Export</td><td>Runs entropy triage, scans threat samples, and uploads SARIF to Code Scanning.</td></tr>
           <tr><td>9</td><td>RustSec Advisory Database Audit</td><td>Scans <code>Cargo.lock</code> against the RustSec database with zero vulnerabilities.</td></tr>
@@ -583,8 +587,8 @@ nether-ward canary plant --dir /home/user/workspace
 nether-ward canary scan --dir /home/user/workspace
 nether-ward canary scan --payload "leaked_token_value_here"
 
-# 6. Start AI security gateway on port 4000 with semantic firewall
-nether-ward gateway --port 4000 --sanitize --semantic-firewall
+# 6. Start AI security gateway on port 4000 with semantic firewall and context quarantine
+nether-ward gateway --port 4000 --sanitize --semantic-firewall --quarantine
 
 # 7. Execute command inside kernel sandbox without network access
 nether-ward sandbox --no-network -- cargo build

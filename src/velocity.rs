@@ -273,12 +273,15 @@ impl ContextQuarantine {
 
     /// Enclose untrusted content (e.g. web search outputs, user uploads) in boundary tags
     pub fn wrap(untrusted_content: &str, source: &str) -> String {
-        let clean_source = source.replace('"', "");
+        let clean_source = source.replace(['"', '>'], "");
+        let safe_content = untrusted_content
+            .replace(Self::START_MARKER, "<<<ESCAPED_QUARANTINE_START")
+            .replace(Self::END_MARKER, "<<<ESCAPED_QUARANTINE_END>>>");
         format!(
             "{} source=\"{}\">>>\n{}\n{}\n",
             Self::START_MARKER,
             clean_source,
-            untrusted_content,
+            safe_content,
             Self::END_MARKER
         )
     }

@@ -331,8 +331,8 @@ pub fn get_default_rules() -> Vec<SastRule> {
             title: "Indirect Goal Hijacking via Unquarantined Context".to_string(),
             category: RuleCategory::AgentAgency,
             severity: SastSeverity::Critical,
-            pattern: r#"(?:(?i)ignore\s+all\s+(?:previous|prior)\s+instructions|system\s+override\s+code\s*[:=]|<<</NETHER_WARD_QUARANTINE_BOUNDARY>>>)"#.to_string(),
-            recommendation: "Reject payload. External untrusted text contains directive override syntax or quarantine escape attempt.".to_string(),
+            pattern: r#"(?:(?i)ignore\s+all\s+(?:previous|prior)\s+instructions|system\s+override\s+code\s*[:=])"#.to_string(),
+            recommendation: "Reject payload. External untrusted text contains directive override syntax attempting to subvert agent goal alignment.".to_string(),
         },
     ]
 }

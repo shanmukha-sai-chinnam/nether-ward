@@ -17,6 +17,7 @@ async fn spawn_test_gateway(sanitize: bool) -> (String, Arc<GatewayState>) {
         port: addr.port(),
         sanitize,
         semantic_firewall: false,
+        quarantine: false,
         jev_client: None,
         governor: Arc::new(nether_ward::governor::RateGovernor::default()),
         client: reqwest::Client::new(),
@@ -160,10 +161,35 @@ async fn test_e2e_gateway_sanitization_in_flight() {
         stream: None,
     };
 
-    let result = nether_ward::gateway::scan_and_sanitize_incoming_request(&mut req, true);
+    let result = nether_ward::gateway::scan_and_sanitize_incoming_request(&mut req, true, false);
     assert!(result.is_ok());
     assert_eq!(
         req.messages[0].content.as_deref().unwrap(),
         "Here is my secret AWS key: AKIA***REDACTED***MPLE"
     );
+
+    // Tool response auto-quarantine test
+    let mut tool_req = ChatCompletionRequest {
+        model: Some("gemini-2.5-flash".to_string()),
+        messages: vec![ChatMessage {
+            role: "tool".to_string(),
+            content: Some("Retrieved external webpage data".to_string()),
+            name: Some("fetch".to_string()),
+            tool_calls: None,
+            tool_call_id: Some("call_1".to_string()),
+        }],
+        tools: None,
+        tool_choice: None,
+        temperature: None,
+        max_tokens: None,
+        stream: None,
+    };
+    let q_res =
+        nether_ward::gateway::scan_and_sanitize_incoming_request(&mut tool_req, false, true);
+    assert!(q_res.is_ok());
+    assert!(tool_req.messages[0]
+        .content
+        .as_deref()
+        .unwrap()
+        .contains("<<<NETHER_WARD_QUARANTINE_BOUNDARY"));
 }

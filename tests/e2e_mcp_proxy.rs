@@ -134,13 +134,18 @@ fn test_e2e_mcp_server_response_sanitizes_credentials() {
     .to_string();
 
     // When sanitize is enabled, credential must be redacted
-    let sanitized_output = process_server_mcp_line(&server_output, true);
+    let sanitized_output = process_server_mcp_line(&server_output, true, false);
     assert!(!sanitized_output.contains("AKIAIOSFODNN7EXAMPLE"));
     assert!(sanitized_output.contains("AKIA***REDACTED***MPLE"));
 
     // When sanitize is disabled, string passes unchanged
-    let unsanitized_output = process_server_mcp_line(&server_output, false);
+    let unsanitized_output = process_server_mcp_line(&server_output, false, false);
     assert!(unsanitized_output.contains("AKIAIOSFODNN7EXAMPLE"));
+
+    // When quarantine is enabled, content is encapsulated in boundary
+    let quarantined_output = process_server_mcp_line(&server_output, true, true);
+    assert!(quarantined_output.contains("<<<NETHER_WARD_QUARANTINE_BOUNDARY"));
+    assert!(quarantined_output.contains("<<</NETHER_WARD_QUARANTINE_BOUNDARY>>>"));
 }
 
 #[tokio::test]

@@ -475,14 +475,52 @@ pub fn process_client_mcp_line(
     process_client_mcp_line_stateful(line, sanitize, &mut tracker)
 }
 
-/// Transform outgoing JSON-RPC line from server to client, redacting secrets in-flight
-pub fn process_server_mcp_line(line: &str, sanitize: bool) -> String {
-    if sanitize {
+/// Transform outgoing JSON-RPC line from server to client, redacting secrets and optionally wrapping tool outputs in Context Quarantine
+pub fn process_server_mcp_line(line: &str, sanitize: bool, quarantine: bool) -> String {
+    let mut current = if sanitize {
         let (sanitized, _) = sast::sanitize_secrets(line);
         sanitized
     } else {
         line.to_string()
+    };
+
+    if quarantine {
+        if let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&current) {
+            if let Some(content_arr) = val
+                .get_mut("result")
+                .and_then(|r| r.get_mut("content"))
+                .and_then(|c| c.as_array_mut())
+            {
+                let mut modified = false;
+                for item in content_arr {
+                    if item.get("type").and_then(|t| t.as_str()) == Some("text") {
+                        if let Some(text_val) = item.get_mut("text") {
+                            if let Some(text_str) = text_val.as_str() {
+                                if !text_str
+                                    .contains(crate::velocity::ContextQuarantine::START_MARKER)
+                                {
+                                    *text_val = serde_json::Value::String(
+                                        crate::velocity::ContextQuarantine::wrap(
+                                            text_str,
+                                            "mcp_tool_result",
+                                        ),
+                                    );
+                                    modified = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                if modified {
+                    if let Ok(serialized) = serde_json::to_string(&val) {
+                        current = serialized;
+                    }
+                }
+            }
+        }
     }
+
+    current
 }
 
 /// Run bidirectional stdio proxy between coding agent and underlying MCP server
@@ -491,6 +529,7 @@ pub async fn run_mcp_proxy(
     args: &[String],
     sanitize: bool,
     semantic: bool,
+    quarantine: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let jev_opt = if semantic {
         crate::jev::JevClient::from_env_or_config()
@@ -499,7 +538,7 @@ pub async fn run_mcp_proxy(
     };
 
     eprintln!(
-        "{} Initializing stdio proxy for target '{}' (Sanitization: {}, Semantic Firewall: {})",
+        "{} Initializing stdio proxy for target '{}' (Sanitization: {}, Semantic Firewall: {}, Quarantine: {})",
         "NETHER WARD MCP PROXY:".cyan().bold(),
         cmd,
         if sanitize {
@@ -511,6 +550,11 @@ pub async fn run_mcp_proxy(
             "Active (Jev System One)".green()
         } else if semantic {
             "Awaiting TYPESAFE_API_KEY".yellow()
+        } else {
+            "Disabled".yellow()
+        },
+        if quarantine {
+            "Active (Context Quarantine Boundary)".green()
         } else {
             "Disabled".yellow()
         }
@@ -618,7 +662,7 @@ pub async fn run_mcp_proxy(
         let mut stdout = tokio::io::stdout();
 
         while let Ok(Some(line)) = reader.next_line().await {
-            let out_line = process_server_mcp_line(&line, sanitize);
+            let out_line = process_server_mcp_line(&line, sanitize, quarantine);
             if let Err(e) = stdout.write_all(format!("{out_line}\n").as_bytes()).await {
                 eprintln!("Nether Ward MCP Proxy: Client stdout closed: {e}");
                 break;
@@ -807,9 +851,17 @@ mod tests {
     #[test]
     fn test_process_server_mcp_line_secret_redaction() {
         let line = r#"{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"AWS_KEY=AKIAIOSFODNN7EXAMPLE"}]}}"#;
-        let sanitized = process_server_mcp_line(line, true);
+        let sanitized = process_server_mcp_line(line, true, false);
         assert!(!sanitized.contains("AKIAIOSFODNN7EXAMPLE"));
         assert!(sanitized.contains("AKIA***REDACTED***MPLE"));
+    }
+
+    #[test]
+    fn test_process_server_mcp_line_quarantine_wrapping() {
+        let line = r#"{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"External untrusted data retrieved from web"}]}}"#;
+        let quarantined = process_server_mcp_line(line, false, true);
+        assert!(quarantined.contains("<<<NETHER_WARD_QUARANTINE_BOUNDARY"));
+        assert!(quarantined.contains("<<</NETHER_WARD_QUARANTINE_BOUNDARY>>>"));
     }
 
     #[test]

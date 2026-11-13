@@ -41,6 +41,7 @@ pub struct GatewayState {
     pub port: u16,
     pub sanitize: bool,
     pub semantic_firewall: bool,
+    pub quarantine: bool,
     pub jev_client: Option<Arc<crate::jev::JevClient>>,
     pub governor: Arc<crate::governor::RateGovernor>,
     pub client: reqwest::Client,
@@ -220,14 +221,22 @@ pub fn inspect_tool_calls(
     Ok(())
 }
 
-/// Firewall scan of an incoming ChatCompletionRequest with optional in-flight sanitization and multi-turn tracking
+/// Firewall scan of an incoming ChatCompletionRequest with optional in-flight sanitization, quarantine wrapping, and multi-turn tracking
 pub fn scan_and_sanitize_incoming_request(
     req: &mut ChatCompletionRequest,
     sanitize: bool,
+    quarantine: bool,
 ) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
     let mut session_tracker = crate::mcp::McpSessionTracker::default();
 
     for msg in &mut req.messages {
+        if quarantine && (msg.role == "tool" || msg.role == "function") {
+            if let Some(ref mut text) = msg.content {
+                if !text.contains(crate::velocity::ContextQuarantine::START_MARKER) {
+                    *text = crate::velocity::ContextQuarantine::wrap(text, "tool_response");
+                }
+            }
+        }
         if let Some(ref mut text) = msg.content {
             if sanitize {
                 let (sanitized, _) = crate::sast::sanitize_secrets(text);
@@ -305,7 +314,7 @@ pub fn scan_incoming_request(
     req: &ChatCompletionRequest,
 ) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
     let mut cloned = req.clone();
-    scan_and_sanitize_incoming_request(&mut cloned, false)
+    scan_and_sanitize_incoming_request(&mut cloned, false, false)
 }
 
 /// Firewall scan of outgoing model choices and tool calls
@@ -335,6 +344,7 @@ pub async fn run_gateway(
     upstream_url: Option<String>,
     sanitize: bool,
     semantic_firewall: bool,
+    quarantine: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut api_key = std::env::var("GEMINI_API_KEY").unwrap_or_default();
     if api_key.is_empty() {
@@ -363,6 +373,7 @@ pub async fn run_gateway(
         port,
         sanitize,
         semantic_firewall,
+        quarantine,
         jev_client: jev_client.clone(),
         governor,
         client: reqwest::Client::new(),
@@ -410,6 +421,17 @@ pub async fn run_gateway(
             "Active (In-Flight Secret Redaction)".green().bold()
         } else {
             "Disabled (Strict Perimeter Blocking)".yellow()
+        }
+    );
+    println!(
+        "{:<24}: {}",
+        "Context Quarantine".bold(),
+        if quarantine {
+            "Active (Indirect Prompt Injection Boundary Isolation)"
+                .green()
+                .bold()
+        } else {
+            "Disabled".yellow()
         }
     );
     println!(
@@ -525,7 +547,9 @@ async fn chat_completions(
     state.metrics.total_requests.fetch_add(1, Ordering::Relaxed);
 
     // 1. Inspect incoming request via Nether Ward Sentinel Firewall and sanitize if enabled
-    if let Err((status, err_json)) = scan_and_sanitize_incoming_request(&mut req, state.sanitize) {
+    if let Err((status, err_json)) =
+        scan_and_sanitize_incoming_request(&mut req, state.sanitize, state.quarantine)
+    {
         state
             .metrics
             .blocked_requests
@@ -1010,7 +1034,7 @@ mod tests {
         };
 
         // When sanitize is enabled, secret is masked and request passes inspection
-        let res = scan_and_sanitize_incoming_request(&mut req_sanitize, true);
+        let res = scan_and_sanitize_incoming_request(&mut req_sanitize, true, false);
         assert!(res.is_ok());
         assert_eq!(
             req_sanitize.messages[0].content.as_deref(),
@@ -1033,7 +1057,7 @@ mod tests {
             max_tokens: None,
             stream: None,
         };
-        let res_strict = scan_and_sanitize_incoming_request(&mut req_strict, false);
+        let res_strict = scan_and_sanitize_incoming_request(&mut req_strict, false, false);
         assert!(res_strict.is_err());
     }
 
@@ -1057,7 +1081,7 @@ mod tests {
             stream: None,
         };
 
-        let res = scan_and_sanitize_incoming_request(&mut req, true);
+        let res = scan_and_sanitize_incoming_request(&mut req, true, false);
         assert!(res.is_err());
     }
 
@@ -1119,7 +1143,7 @@ mod tests {
             stream: None,
         };
 
-        let res = scan_and_sanitize_incoming_request(&mut req, false);
+        let res = scan_and_sanitize_incoming_request(&mut req, false, false);
         assert!(
             res.is_err(),
             "Multi-turn drop-and-execute chain must be blocked"
@@ -1131,5 +1155,30 @@ mod tests {
             .unwrap()
             .contains("Multi-turn tool chain blocked"));
         assert_eq!(err_json["error"]["rule_id"], "NW-MCP-005");
+    }
+
+    #[test]
+    fn test_scan_and_sanitize_incoming_request_quarantine_auto_wrapping() {
+        let mut req = ChatCompletionRequest {
+            model: Some("test-model".to_string()),
+            messages: vec![ChatMessage {
+                role: "tool".to_string(),
+                content: Some("Untrusted external tool payload from web".to_string()),
+                name: Some("fetch".to_string()),
+                tool_calls: None,
+                tool_call_id: Some("call_fetch_1".to_string()),
+            }],
+            tools: None,
+            tool_choice: None,
+            temperature: None,
+            max_tokens: None,
+            stream: None,
+        };
+
+        let res = scan_and_sanitize_incoming_request(&mut req, false, true);
+        assert!(res.is_ok());
+        let text = req.messages[0].content.as_deref().unwrap();
+        assert!(text.contains("<<<NETHER_WARD_QUARANTINE_BOUNDARY"));
+        assert!(text.contains("<<</NETHER_WARD_QUARANTINE_BOUNDARY>>>"));
     }
 }

@@ -77,6 +77,10 @@ enum Commands {
         /// Enable Jev System One semantic safety verification on incoming requests
         #[arg(long)]
         semantic_firewall: bool,
+
+        /// Enable automatic context quarantine boundary wrapping for untrusted tool outputs
+        #[arg(long)]
+        quarantine: bool,
     },
 
     /// Audit Model Context Protocol (MCP) servers or run bidirectional stdio security proxy
@@ -96,6 +100,10 @@ enum Commands {
         /// Enable Jev System One semantic verification during proxy execution
         #[arg(long)]
         semantic: bool,
+
+        /// Enable automatic context quarantine boundary wrapping for tool outputs
+        #[arg(long)]
+        quarantine: bool,
 
         /// Run transparent bidirectional stdio security proxy wrapping target command
         #[arg(long)]
@@ -399,8 +407,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             upstream,
             sanitize,
             semantic_firewall,
+            quarantine,
         } => {
-            gateway::run_gateway(port, model, upstream, sanitize, semantic_firewall).await?;
+            gateway::run_gateway(
+                port,
+                model,
+                upstream,
+                sanitize,
+                semantic_firewall,
+                quarantine,
+            )
+            .await?;
         }
 
         Commands::Mcp {
@@ -408,6 +425,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             inspect,
             sanitize,
             semantic,
+            quarantine,
             proxy,
             target_command,
             json,
@@ -415,14 +433,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if proxy {
                 if target_command.is_empty() {
                     eprintln!(
-                        "{}: Proxy mode requires a target command. Syntax: nether-ward mcp --proxy [--sanitize] [--semantic] -- <command> [args...]",
+                        "{}: Proxy mode requires a target command. Syntax: nether-ward mcp --proxy [--sanitize] [--semantic] [--quarantine] -- <command> [args...]",
                         "Error".red().bold()
                     );
                     std::process::exit(1);
                 }
                 let cmd = &target_command[0];
                 let args = &target_command[1..];
-                mcp::run_mcp_proxy(cmd, args, sanitize, semantic).await?;
+                mcp::run_mcp_proxy(cmd, args, sanitize, semantic, quarantine).await?;
             } else if let Some(config_path) = config {
                 if !config_path.exists() {
                     eprintln!(

@@ -10,10 +10,10 @@ Named after Pugna's Nether Ward in Dota 2: an in-game ward that monitors its are
 
 - **Automated Behavioral Regression (ABR) Evaluator (`nether-ward abr --baseline <FILE> --candidate <FILE>`)**: Evaluates PR and commit changes to agent prompts, system instructions, and tool declarations against baseline security risk scores. Combines TypeSafe Jev System One calibrated scoring with deterministic SAST heuristic analysis to block regressions in CI before merging.
 - **Adaptive Token Bucket & Quota Governor**: Manages token bucket capacity with Additive Increase / Multiplicative Decrease (AIMD) pacing, parses upstream `Retry-After` and `X-RateLimit-*` headers, and applies decorrelated exponential backoff across Gateway and Red Team parallel workers to eliminate HTTP 429 quota exhaustion.
-- **Active Stdio MCP Security Proxy (`nether-ward mcp --proxy [--sanitize] [--semantic] -- <cmd>`)**: Intercepts line-delimited JSON-RPC messages between coding agents (Antigravity, Claude Code, Cursor) and local MCP server tools. Evaluates stateful multi-turn attack chains (staged drop-and-execute sequences, sensitive read followed by outbound exfiltration), blocks hostile commands (`rm -rf /`, reverse shells) with structured JSON-RPC 2.0 error responses without terminating the server session, evaluates tool invocations against Jev System One semantic policies (`--semantic`), and redacts exposed credentials in-flight (`--sanitize`).
+- **Active Stdio MCP Security Proxy (`nether-ward mcp --proxy [--sanitize] [--semantic] [--quarantine] -- <cmd>`)**: Intercepts line-delimited JSON-RPC messages between coding agents (Antigravity, Claude Code, Cursor) and local MCP server tools. Evaluates stateful multi-turn attack chains (staged drop-and-execute sequences, sensitive read followed by outbound exfiltration), blocks hostile commands (`rm -rf /`, reverse shells) with structured JSON-RPC 2.0 error responses without terminating the server session, evaluates tool invocations against Jev System One semantic policies (`--semantic`), redacts exposed credentials in-flight (`--sanitize`), and encapsulates untrusted tool response content in context quarantine boundaries (`--quarantine`).
 - **Canary Tokens & Honeypot Decoys (`nether-ward canary plant --dir <DIR> / canary scan`)**: Generates deterministic and high-entropy canary tokens for AWS, GCP, Slack, and private keys. Plants synthetic decoy honeypot files (`.aws/credentials`, `.env.canary`) with registered tripwires to trap unauthorized agent directory traversal and detects token leakage in prompts or command arguments.
 - **Operational Velocity Limits & Dual-Key Approval Gates (`nether-ward gate auth`)**: Tracks cumulative agent edit tokens and command execution rate over a sliding time window. Wraps quarantined contexts (`<<<CONTEXT_QUARANTINE_BOUNDARY>>>`) to neutralize indirect prompt injection payloads, and enforces dual-key authorization requirements for high-risk operations (e.g. database dropped, system switches).
-- **Bicameral Semantic Firewall Gateway (`nether-ward gateway [--port <PORT>] [--sanitize] [--semantic-firewall]`)**: Axum reverse proxy with runtime tool-call firewall, in-flight secret sanitization, Server-Sent Events (`stream: true`), operational telemetry (`/v1/stats`, `/metrics`), and pre-execution semantic inspection via TypeSafe Jev System One (`--semantic-firewall`).
+- **Bicameral Semantic Firewall Gateway (`nether-ward gateway [--port <PORT>] [--sanitize] [--semantic-firewall] [--quarantine]`)**: Axum reverse proxy with runtime tool-call firewall, in-flight secret sanitization, context quarantine auto-wrapping for tool responses (`--quarantine`), Server-Sent Events (`stream: true`), operational telemetry (`/v1/stats`, `/metrics`), and pre-execution semantic inspection via TypeSafe Jev System One (`--semantic-firewall`).
 - **Kernel Sandbox Runner (`nether-ward sandbox [--workspace <dir>] [--no-network] [--dry-run] -- <cmd>`)**: Executes agent tools and subprocesses inside ephemeral Linux kernel security boundaries using Bubblewrap container namespaces (`bwrap`) or native `PR_SET_NO_NEW_PRIVS` with network namespace isolation (`CLONE_NEWNET`) and environment variable scrubbing (`LD_PRELOAD`, `LD_LIBRARY_PATH`).
 - **MCP Configuration Security Auditor (`nether-ward mcp --config <path>`)**: Audits `.agents/mcp_config.json` for shell-wrapping antipatterns (`bash -c`, `sh`), injected arguments, and exposed environment credentials.
 - **Static Analysis (SAST) & De-Obfuscation Engine (`nether-ward threat --sast <dir>`)**: Scans source code, agent tools, and configurations for exposed API secrets, dynamic code evaluation (`eval`, `exec`), shell invocations (`os.system`, `subprocess(shell=True)`), reflection-based evasion (`getattr(__import__('os'), 'system')`), string concatenation tricks, base64-encoded shellcode stagers, pickle deserialization payloads (`__reduce__`), and SQL injection patterns. Suppresses comment false-positives while preserving secret detection.
@@ -56,8 +56,8 @@ cargo build --release
 # 9. Scan for canary token leaks or honeypot file accesses
 ./target/release/nether-ward canary scan --dir /tmp/test_workspace
 
-# 10. Start the native AI security gateway reverse proxy with semantic firewall (port 4000)
-./target/release/nether-ward gateway --port 4000 --sanitize --semantic-firewall
+# 10. Start the native AI security gateway reverse proxy with semantic firewall and context quarantine (port 4000)
+./target/release/nether-ward gateway --port 4000 --sanitize --semantic-firewall --quarantine
 
 # 11. Query gateway operational metrics and Prometheus telemetry
 curl http://localhost:4000/v1/stats
@@ -149,8 +149,8 @@ The GitHub Actions workflow (`.github/workflows/ai-security-pipeline.yml`) runs 
 2. **Rust Code Format Audit**: Checks formatting with `cargo fmt --all -- --check`.
 3. **Clippy Antipattern Linter**: Enforces zero compiler warnings with `cargo clippy --all-targets -- -D warnings`.
 4. **Static Secret & Credential Scan**: Audits tracked repository files for exposed credentials.
-5. **Internal Module Unit Tests**: Executes unit test suites (61 tests).
-6. **End-to-End Integration Tests**: Tests CLI commands, gateway, MCP proxy, and red team runners (28 tests).
+5. **Internal Module Unit Tests**: Executes unit test suites (72 tests).
+6. **End-to-End Integration Tests**: Tests CLI commands, gateway, MCP proxy, and red team runners (30 tests).
 7. **Kernel Sandbox Runner Verification**: Tests `PR_SET_NO_NEW_PRIVS` and `CLONE_NEWNET` isolation boundaries.
 8. **Threat Entropy & SAST SARIF Export**: Runs entropy triage and exports SARIF to GitHub Code Scanning.
 9. **RustSec Advisory Database Audit**: Validates `Cargo.lock` against the RustSec database with zero vulnerabilities.
