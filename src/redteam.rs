@@ -381,10 +381,17 @@ pub async fn run_redteam(
         .build()?;
 
     let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrency));
+    let governor = std::sync::Arc::new(crate::governor::RateGovernor::new(
+        crate::governor::RateGovernorConfig {
+            capacity: (concurrency as f64 * 2.0).max(4.0),
+            refill_rate: (concurrency as f64 * 1.5).max(3.0),
+            ..Default::default()
+        },
+    ));
     let mut probe_handles = Vec::new();
 
     println!(
-        "\n{} Dispatching parallel probe execution across {} workers...",
+        "\n{} Dispatching parallel probe execution across {} workers (Adaptive Quota Governor Active)...",
         "==>".blue().bold(),
         concurrency
     );
@@ -392,6 +399,7 @@ pub async fn run_redteam(
     for (prompt_name, system_instruction) in &loaded_prompts {
         for test in &tests_to_run {
             let sem = semaphore.clone();
+            let gov = governor.clone();
             let client = client.clone();
             let model_id = model_id.clone();
             let api_key = api_key.clone();
@@ -409,6 +417,7 @@ pub async fn run_redteam(
 
                 let mut response = None;
                 for attempt in 0..4 {
+                    gov.acquire_async(1.0).await;
                     let res = if is_local {
                         let ep_url = local_ep.as_deref().unwrap_or("http://localhost:4000/v1/chat/completions");
                         let messages = if let Some(ref traj) = test.vars.messages {
@@ -495,11 +504,13 @@ pub async fn run_redteam(
 
                     match res {
                         Ok(resp) => {
-                            if (resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS
-                                || resp.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE)
+                            let status = resp.status();
+                            let headers = resp.headers().clone();
+                            gov.record_response(status, &headers).await;
+                            if (status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                                || status == reqwest::StatusCode::SERVICE_UNAVAILABLE)
                                 && attempt < 3
                             {
-                                tokio::time::sleep(tokio::time::Duration::from_millis(1500 * (attempt as u64 + 1))).await;
                                 continue;
                             }
                             response = Some(Ok(resp));
@@ -507,7 +518,7 @@ pub async fn run_redteam(
                         }
                         Err(e) => {
                             if attempt < 3 {
-                                tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+                                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                                 continue;
                             }
                             response = Some(Err(e));

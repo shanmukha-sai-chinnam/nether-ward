@@ -18,6 +18,7 @@ async fn spawn_test_gateway(sanitize: bool) -> (String, Arc<GatewayState>) {
         sanitize,
         semantic_firewall: false,
         jev_client: None,
+        governor: Arc::new(nether_ward::governor::RateGovernor::default()),
         client: reqwest::Client::new(),
         metrics: Arc::new(GatewayMetrics::default()),
     });

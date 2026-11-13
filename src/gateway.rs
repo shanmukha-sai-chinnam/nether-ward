@@ -42,6 +42,7 @@ pub struct GatewayState {
     pub sanitize: bool,
     pub semantic_firewall: bool,
     pub jev_client: Option<Arc<crate::jev::JevClient>>,
+    pub governor: Arc<crate::governor::RateGovernor>,
     pub client: reqwest::Client,
     pub metrics: Arc<GatewayMetrics>,
 }
@@ -354,6 +355,7 @@ pub async fn run_gateway(
     };
 
     let model = upstream_model.unwrap_or_else(|| "gemini-flash-lite-latest".to_string());
+    let governor = Arc::new(crate::governor::RateGovernor::default());
     let state = Arc::new(GatewayState {
         api_key,
         upstream_model: model.clone(),
@@ -362,6 +364,7 @@ pub async fn run_gateway(
         sanitize,
         semantic_firewall,
         jev_client: jev_client.clone(),
+        governor,
         client: reqwest::Client::new(),
         metrics: Arc::new(GatewayMetrics::default()),
     });
@@ -456,6 +459,7 @@ async fn list_models(State(state): State<Arc<GatewayState>>) -> impl IntoRespons
 async fn gateway_stats(State(state): State<Arc<GatewayState>>) -> impl IntoResponse {
     let now = chrono::Utc::now();
     let uptime = (now - state.metrics.start_time).num_seconds().max(0);
+    let gov_metrics = state.governor.metrics().await;
     Json(serde_json::json!({
         "service": "nether-ward-gateway",
         "version": "0.2.0",
@@ -464,7 +468,14 @@ async fn gateway_stats(State(state): State<Arc<GatewayState>>) -> impl IntoRespo
         "blocked_requests": state.metrics.blocked_requests.load(Ordering::Relaxed),
         "sanitized_secrets": state.metrics.sanitized_secrets.load(Ordering::Relaxed),
         "completed_requests": state.metrics.completed_requests.load(Ordering::Relaxed),
-        "active_rules_count": crate::sast::get_default_rules().len()
+        "active_rules_count": crate::sast::get_default_rules().len(),
+        "rate_governor": {
+            "available_tokens": gov_metrics.available_tokens,
+            "current_refill_rate": gov_metrics.current_refill_rate,
+            "consecutive_throttles": gov_metrics.consecutive_throttles,
+            "total_throttles": gov_metrics.total_throttles,
+            "is_penalized": gov_metrics.is_penalized
+        }
     }))
 }
 
@@ -473,6 +484,7 @@ async fn prometheus_metrics(State(state): State<Arc<GatewayState>>) -> impl Into
     let blocked = state.metrics.blocked_requests.load(Ordering::Relaxed);
     let sanitized = state.metrics.sanitized_secrets.load(Ordering::Relaxed);
     let completed = state.metrics.completed_requests.load(Ordering::Relaxed);
+    let gov_metrics = state.governor.metrics().await;
 
     let output = format!(
         "# HELP nether_ward_requests_total Total number of chat completion requests received\n\
@@ -486,7 +498,15 @@ async fn prometheus_metrics(State(state): State<Arc<GatewayState>>) -> impl Into
          nether_ward_sanitized_total {sanitized}\n\
          # HELP nether_ward_completed_total Total number of requests successfully completed\n\
          # TYPE nether_ward_completed_total counter\n\
-         nether_ward_completed_total {completed}\n"
+         nether_ward_completed_total {completed}\n\
+         # HELP nether_ward_governor_throttles_total Total rate limit throttles (429/503) encountered\n\
+         # TYPE nether_ward_governor_throttles_total counter\n\
+         nether_ward_governor_throttles_total {}\n\
+         # HELP nether_ward_governor_refill_rate Current token bucket refill rate per second\n\
+         # TYPE nether_ward_governor_refill_rate gauge\n\
+         nether_ward_governor_refill_rate {:.2}\n",
+        gov_metrics.total_throttles,
+        gov_metrics.current_refill_rate
     );
 
     (
@@ -567,13 +587,44 @@ async fn chat_completions(
         let mut forwarded_req = req.clone();
         forwarded_req.model = Some(target_model.clone());
 
-        let resp = match state
-            .client
-            .post(&endpoint)
-            .json(&forwarded_req)
-            .send()
-            .await
-        {
+        let mut attempts = 0;
+        let mut final_resp = None;
+
+        while attempts < 3 {
+            attempts += 1;
+            state.governor.acquire_async(1.0).await;
+            match state
+                .client
+                .post(&endpoint)
+                .json(&forwarded_req)
+                .send()
+                .await
+            {
+                Ok(r) => {
+                    let status = r.status();
+                    let headers = r.headers().clone();
+                    state.governor.record_response(status, &headers).await;
+                    if (status == StatusCode::TOO_MANY_REQUESTS
+                        || status == StatusCode::SERVICE_UNAVAILABLE)
+                        && attempts < 3
+                    {
+                        continue;
+                    }
+                    final_resp = Some(Ok(r));
+                    break;
+                }
+                Err(e) => {
+                    if attempts < 3 {
+                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                        continue;
+                    }
+                    final_resp = Some(Err(e));
+                    break;
+                }
+            }
+        }
+
+        let resp = match final_resp.expect("Exhausted gateway upstream attempts") {
             Ok(r) => r,
             Err(e) => {
                 state
@@ -691,7 +742,38 @@ async fn chat_completions(
             target_model, state.api_key
         );
 
-        let resp = match state.client.post(&url).json(&gemini_payload).send().await {
+        let mut attempts = 0;
+        let mut final_resp = None;
+
+        while attempts < 3 {
+            attempts += 1;
+            state.governor.acquire_async(1.0).await;
+            match state.client.post(&url).json(&gemini_payload).send().await {
+                Ok(r) => {
+                    let status = r.status();
+                    let headers = r.headers().clone();
+                    state.governor.record_response(status, &headers).await;
+                    if (status == StatusCode::TOO_MANY_REQUESTS
+                        || status == StatusCode::SERVICE_UNAVAILABLE)
+                        && attempts < 3
+                    {
+                        continue;
+                    }
+                    final_resp = Some(Ok(r));
+                    break;
+                }
+                Err(e) => {
+                    if attempts < 3 {
+                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                        continue;
+                    }
+                    final_resp = Some(Err(e));
+                    break;
+                }
+            }
+        }
+
+        let resp = match final_resp.expect("Exhausted gateway gemini attempts") {
             Ok(r) => r,
             Err(e) => {
                 state

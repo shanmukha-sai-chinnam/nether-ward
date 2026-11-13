@@ -3,6 +3,7 @@ use colored::*;
 use std::fs;
 use std::path::PathBuf;
 
+use nether_ward::abr;
 use nether_ward::canary;
 use nether_ward::gateway;
 use nether_ward::mcp;
@@ -226,6 +227,33 @@ enum Commands {
         /// Output results as JSON
         #[arg(long)]
         json: bool,
+    },
+
+    /// Run Automated Behavioral Regression (ABR) evaluation comparing baseline and candidate prompts/policies
+    Abr {
+        /// Baseline configuration or prompt file path
+        #[arg(short, long)]
+        baseline: PathBuf,
+
+        /// Candidate configuration or prompt file path
+        #[arg(short, long)]
+        candidate: PathBuf,
+
+        /// Maximum allowed risk score increase (default: 0.05)
+        #[arg(long)]
+        max_risk_delta: Option<f64>,
+
+        /// Optional maximum allowed candidate risk ceiling (0.0 to 1.0)
+        #[arg(long)]
+        max_risk_ceiling: Option<f64>,
+
+        /// Export results as JSON
+        #[arg(long)]
+        json: bool,
+
+        /// Output Markdown evaluation table to GitHub step summary path
+        #[arg(long)]
+        step_summary: Option<PathBuf>,
     },
 }
 
@@ -784,6 +812,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
                 std::process::exit(1);
             }
+        }
+
+        Commands::Abr {
+            baseline,
+            candidate,
+            max_risk_delta,
+            max_risk_ceiling,
+            json,
+            step_summary,
+        } => {
+            abr::run_abr_cli(
+                baseline,
+                candidate,
+                max_risk_delta,
+                max_risk_ceiling,
+                json,
+                step_summary,
+            )
+            .await?;
         }
     }
 

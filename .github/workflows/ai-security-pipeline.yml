@@ -249,15 +249,33 @@ jobs:
           echo "| Cargo.lock | RustSec Advisory DB | Passed (0 Vulnerabilities) |" >> $GITHUB_STEP_SUMMARY
 
   dependency-review:
-    name: 10. PR Supply Chain Guard
+    name: 10. PR Supply Chain & ABR Guard
     runs-on: ubuntu-24.04
     if: github.event_name == 'pull_request'
     steps:
       - name: Checkout Code
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Dependency Review
         uses: actions/dependency-review-action@v5
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+
+      - name: Automated Behavioral Regression (ABR) Evaluation
+        env:
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+        run: |
+          echo "==> Fetching base branch to evaluate prompt and policy behavioral delta..."
+          git fetch origin ${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }} || true
+          mkdir -p /tmp/abr_eval
+          git show origin/${{ github.base_ref }}:config/redteam_config.yaml > /tmp/abr_eval/baseline.yaml 2>/dev/null || cp config/redteam_config.yaml /tmp/abr_eval/baseline.yaml
+          cargo run --release -- abr --baseline /tmp/abr_eval/baseline.yaml --candidate config/redteam_config.yaml --step-summary $GITHUB_STEP_SUMMARY
 
   hermetic-nix-build:
     name: 11. Hermetic Nix Flake Derivation Build
@@ -360,6 +378,8 @@ jobs:
           ./target/release/nether-ward redteam --config config/redteam_config.yaml --dataset datasets/trajectories/agent_tool_trajectories.jsonl --concurrency 2 || true
           echo "==> Starting Native Rust OWASP Top 10 for LLMs Synthetic Red Team Evaluation..."
           ./target/release/nether-ward redteam --config config/redteam_config.yaml --dataset datasets/owasp_top10_expanded.jsonl --concurrency 2 || true
+          echo "==> Running Automated Behavioral Regression (ABR) Baseline Verification..."
+          ./target/release/nether-ward abr --baseline config/redteam_config.yaml --candidate config/redteam_config.yaml --step-summary $GITHUB_STEP_SUMMARY || true
           echo "==> Verifying Canary Tripwire Seeder & Honeypot Directory Traversal..."
           mkdir -p /tmp/ci_honeypot
           ./target/release/nether-ward canary plant --dir /tmp/ci_honeypot

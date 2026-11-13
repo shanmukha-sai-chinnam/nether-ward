@@ -8,6 +8,8 @@ Named after Pugna's Nether Ward in Dota 2: an in-game ward that monitors its are
 
 ## Capabilities
 
+- **Automated Behavioral Regression (ABR) Evaluator (`nether-ward abr --baseline <FILE> --candidate <FILE>`)**: Evaluates PR and commit changes to agent prompts, system instructions, and tool declarations against baseline security risk scores. Combines TypeSafe Jev System One calibrated scoring with deterministic SAST heuristic analysis to block regressions in CI before merging.
+- **Adaptive Token Bucket & Quota Governor**: Manages token bucket capacity with Additive Increase / Multiplicative Decrease (AIMD) pacing, parses upstream `Retry-After` and `X-RateLimit-*` headers, and applies decorrelated exponential backoff across Gateway and Red Team parallel workers to eliminate HTTP 429 quota exhaustion.
 - **Active Stdio MCP Security Proxy (`nether-ward mcp --proxy [--sanitize] [--semantic] -- <cmd>`)**: Intercepts line-delimited JSON-RPC messages between coding agents (Antigravity, Claude Code, Cursor) and local MCP server tools. Evaluates stateful multi-turn attack chains (staged drop-and-execute sequences, sensitive read followed by outbound exfiltration), blocks hostile commands (`rm -rf /`, reverse shells) with structured JSON-RPC 2.0 error responses without terminating the server session, evaluates tool invocations against Jev System One semantic policies (`--semantic`), and redacts exposed credentials in-flight (`--sanitize`).
 - **Canary Tokens & Honeypot Decoys (`nether-ward canary plant --dir <DIR> / canary scan`)**: Generates deterministic and high-entropy canary tokens for AWS, GCP, Slack, and private keys. Plants synthetic decoy honeypot files (`.aws/credentials`, `.env.canary`) with registered tripwires to trap unauthorized agent directory traversal and detects token leakage in prompts or command arguments.
 - **Operational Velocity Limits & Dual-Key Approval Gates (`nether-ward gate auth`)**: Tracks cumulative agent edit tokens and command execution rate over a sliding time window. Wraps quarantined contexts (`<<<CONTEXT_QUARANTINE_BOUNDARY>>>`) to neutralize indirect prompt injection payloads, and enforces dual-key authorization requirements for high-risk operations (e.g. database dropped, system switches).
@@ -66,6 +68,9 @@ curl http://localhost:4000/metrics
 
 # 13. Verify local inference engine connectivity (Ollama)
 ./target/release/nether-ward inference
+
+# 14. Run Automated Behavioral Regression (ABR) evaluation comparing baseline and candidate
+./target/release/nether-ward abr --baseline config/redteam_config.yaml --candidate config/redteam_config.yaml --max-risk-delta 0.05
 ```
 
 ---
@@ -81,6 +86,8 @@ For the technical problem statement, 5-layer threat model, and architectural blu
 | `flake.nix` | Hermetic Nix devShell and package derivation. Zero unmanaged state. |
 | `values.json` | Declarative hub for ports, endpoints, model routes, and timeouts. |
 | `src/main.rs` | CLI entrypoint orchestrating subcommands. |
+| `src/abr.rs` | Automated Behavioral Regression evaluator comparing baseline and candidate risk scores. |
+| `src/governor.rs` | Adaptive Rate Governor and Token Bucket with AIMD pacing and Retry-After backoff. |
 | `src/sast.rs` | Static analysis rule engine, token redaction, and directory auditing. |
 | `src/threat.rs` | Shannon and windowed entropy profiling, string extraction, and triage. |
 | `src/jev.rs` | TypeSafe AI System One HTTP client for calibrated semantic judgments. |
