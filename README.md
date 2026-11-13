@@ -8,6 +8,7 @@ Named after Pugna's Nether Ward in Dota 2: an in-game ward that monitors its are
 
 ## Capabilities
 
+- **Declarative Resource Access Control Lists (ACL) & Confinement Sentinel (`nether-ward acl check / audit / rules`)**: Enforces path canonicalization, symlink breakout detection, and strict workspace root confinement across agent filesystem tools (`read_file`, `write_file`, `edit_file`, `delete_file`, `move_file`) and command executions (`run_command`, `bash`, `exec`). Blocks access to operating system paths (`/etc`, `/proc`, `/sys`, `/dev`), private keys (`.ssh`, `*.pem`, `*.key`), and infrastructure credentials (`.aws`, `.env*`, `gcloud`, `kube`).
 - **Automated Behavioral Regression (ABR) Evaluator (`nether-ward abr --baseline <FILE> --candidate <FILE>`)**: Evaluates PR and commit changes to agent prompts, system instructions, and tool declarations against baseline security risk scores. Combines TypeSafe Jev System One calibrated scoring with deterministic SAST heuristic analysis to block regressions in CI before merging.
 - **Adaptive Token Bucket & Quota Governor**: Manages token bucket capacity with Additive Increase / Multiplicative Decrease (AIMD) pacing, parses upstream `Retry-After` and `X-RateLimit-*` headers, and applies decorrelated exponential backoff across Gateway and Red Team parallel workers to eliminate HTTP 429 quota exhaustion.
 - **Active Stdio MCP Security Proxy (`nether-ward mcp --proxy [--sanitize] [--semantic] [--quarantine] -- <cmd>`)**: Intercepts line-delimited JSON-RPC messages between coding agents (Antigravity, Claude Code, Cursor) and local MCP server tools. Evaluates stateful multi-turn attack chains (staged drop-and-execute sequences, sensitive read followed by outbound exfiltration), blocks hostile commands (`rm -rf /`, reverse shells) with structured JSON-RPC 2.0 error responses without terminating the server session, evaluates tool invocations against Jev System One semantic policies (`--semantic`), redacts exposed credentials in-flight (`--sanitize`), and encapsulates untrusted tool response content in context quarantine boundaries (`--quarantine`).
@@ -71,6 +72,11 @@ curl http://localhost:4000/metrics
 
 # 14. Run Automated Behavioral Regression (ABR) evaluation comparing baseline and candidate
 ./target/release/nether-ward abr --baseline config/redteam_config.yaml --candidate config/redteam_config.yaml --max-risk-delta 0.05
+
+# 15. Check path permissions against declarative ACL rules and audit directory symlinks
+./target/release/nether-ward acl check --path /etc/shadow
+./target/release/nether-ward acl check --path ./src/main.rs --workspace .
+./target/release/nether-ward acl audit --dir .
 ```
 
 ---
@@ -149,8 +155,8 @@ The GitHub Actions workflow (`.github/workflows/ai-security-pipeline.yml`) runs 
 2. **Rust Code Format Audit**: Checks formatting with `cargo fmt --all -- --check`.
 3. **Clippy Antipattern Linter**: Enforces zero compiler warnings with `cargo clippy --all-targets -- -D warnings`.
 4. **Static Secret & Credential Scan**: Audits tracked repository files for exposed credentials.
-5. **Internal Module Unit Tests**: Executes unit test suites (72 tests).
-6. **End-to-End Integration Tests**: Tests CLI commands, gateway, MCP proxy, and red team runners (30 tests).
+5. **Internal Module Unit Tests**: Executes unit test suites (78 tests).
+6. **End-to-End Integration Tests**: Tests CLI commands, gateway, MCP proxy, and red team runners (31 tests).
 7. **Kernel Sandbox Runner Verification**: Tests `PR_SET_NO_NEW_PRIVS` and `CLONE_NEWNET` isolation boundaries.
 8. **Threat Entropy & SAST SARIF Export**: Runs entropy triage and exports SARIF to GitHub Code Scanning.
 9. **RustSec Advisory Database Audit**: Validates `Cargo.lock` against the RustSec database with zero vulnerabilities.

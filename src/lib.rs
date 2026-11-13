@@ -1,6 +1,7 @@
 //! Nether Ward: Static security scanner, threat engine, runtime gateway, and adversarial red team harness.
 
 pub mod abr;
+pub mod acl;
 pub mod canary;
 pub mod gateway;
 pub mod governor;

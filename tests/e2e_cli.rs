@@ -378,3 +378,69 @@ fn test_e2e_cli_abr_regression_detection() {
 
     let _ = fs::remove_dir_all(&temp_dir);
 }
+
+#[test]
+fn test_e2e_cli_acl_check_allowed_and_blocked() {
+    let bin = env!("CARGO_BIN_EXE_nether-ward");
+    let temp_dir = std::env::temp_dir().join(format!("cli_acl_test_{}", std::process::id()));
+    fs::create_dir_all(&temp_dir).unwrap();
+
+    let safe_file = temp_dir.join("src/lib.rs");
+    fs::create_dir_all(safe_file.parent().unwrap()).unwrap();
+    fs::write(&safe_file, "pub fn test() {}").unwrap();
+
+    // 1. Safe file check passes with JSON output
+    let output_safe = Command::new(bin)
+        .args([
+            "acl",
+            "check",
+            "--path",
+            safe_file.to_str().unwrap(),
+            "--workspace",
+            temp_dir.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("Failed to execute nether-ward acl check");
+
+    assert!(output_safe.status.success());
+    let stdout_safe = String::from_utf8_lossy(&output_safe.stdout);
+    let json_safe: serde_json::Value =
+        serde_json::from_str(&stdout_safe).expect("Valid ACL JSON output");
+    assert_eq!(json_safe["status"], "allowed");
+
+    // 2. Sensitive path /etc/shadow check fails (exit code 1)
+    let output_blocked = Command::new(bin)
+        .args(["acl", "check", "--path", "/etc/shadow", "--json"])
+        .output()
+        .expect("Failed to execute nether-ward acl check");
+
+    assert!(!output_blocked.status.success());
+    let stdout_blocked = String::from_utf8_lossy(&output_blocked.stdout);
+    let json_blocked: serde_json::Value =
+        serde_json::from_str(&stdout_blocked).expect("Valid ACL violation JSON");
+    assert_eq!(json_blocked["rule_id"], "NW-ACL-002");
+    assert_eq!(json_blocked["severity"], "Critical");
+
+    // 3. Traversal escape check fails
+    let output_escape = Command::new(bin)
+        .args([
+            "acl",
+            "check",
+            "--path",
+            "/tmp/outside_workspace.txt",
+            "--workspace",
+            temp_dir.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("Failed to execute nether-ward acl check");
+
+    assert!(!output_escape.status.success());
+    let stdout_escape = String::from_utf8_lossy(&output_escape.stdout);
+    let json_escape: serde_json::Value =
+        serde_json::from_str(&stdout_escape).expect("Valid ACL violation JSON");
+    assert_eq!(json_escape["rule_id"], "NW-ACL-001");
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}

@@ -537,8 +537,8 @@
           <tr><td>2</td><td>Rust Code Format Audit</td><td>Enforces zero formatting divergence via <code>cargo fmt --all -- --check</code>.</td></tr>
           <tr><td>3</td><td>Clippy Antipattern Linter</td><td>Enforces zero warnings via <code>cargo clippy --all-targets -- -D warnings</code>.</td></tr>
           <tr><td>4</td><td>Static Secret &amp; Credential Scan</td><td>Audits repository tree with <code>git grep</code> for exposed API keys and tokens.</td></tr>
-          <tr><td>5</td><td>Internal Module Unit Tests</td><td>Executes 72 Rust unit tests across SAST, Threat, Gateway, Governor, and Canary modules.</td></tr>
-          <tr><td>6</td><td>End-to-End Integration Tests</td><td>Executes 30 integration test suites for CLI dispatch, gateway, ABR, and MCP proxy.</td></tr>
+          <tr><td>5</td><td>Internal Module Unit Tests</td><td>Executes 78 Rust unit tests across SAST, Threat, Gateway, Governor, Canary, and ACL modules.</td></tr>
+          <tr><td>6</td><td>End-to-End Integration Tests</td><td>Executes 31 integration test suites for CLI dispatch, gateway, ABR, ACL, and MCP proxy.</td></tr>
           <tr><td>7</td><td>Kernel Sandbox Runner Verification</td><td>Verifies <code>PR_SET_NO_NEW_PRIVS</code> and <code>CLONE_NEWNET</code> isolation boundaries.</td></tr>
           <tr><td>8</td><td>Threat Entropy &amp; SAST SARIF Export</td><td>Runs entropy triage, scans threat samples, and uploads SARIF to Code Scanning.</td></tr>
           <tr><td>9</td><td>RustSec Advisory Database Audit</td><td>Scans <code>Cargo.lock</code> against the RustSec database with zero vulnerabilities.</td></tr>
@@ -567,6 +567,7 @@ SUBCOMMANDS:
     sandbox     Execute commands within ephemeral Linux kernel security boundaries
     redteam     Run parallel synthetic red team evaluations against LLM endpoints
     abr         Run Automated Behavioral Regression evaluation comparing prompt risk scores
+    acl         Enforce Resource Access Control Lists (ACL) and path confinement
     inference   Verify local inference engine connectivity (Ollama / vLLM)
     help        Print this message or the help of the given subcommand(s)</code></pre>
 
@@ -597,7 +598,12 @@ nether-ward sandbox --no-network -- cargo build
 nether-ward redteam --dataset datasets/owasp_top10_expanded.jsonl --concurrency 4 --fuzz
 
 # 9. Run Automated Behavioral Regression (ABR) evaluation comparing baseline and candidate
-nether-ward abr --baseline config/redteam_config.yaml --candidate config/redteam_config.yaml --max-risk-delta 0.05</code></pre>
+nether-ward abr --baseline config/redteam_config.yaml --candidate config/redteam_config.yaml --max-risk-delta 0.05
+
+# 10. Check path permissions against declarative ACL rules and audit directory symlinks
+nether-ward acl check --path /etc/shadow
+nether-ward acl check --path ./src/main.rs --workspace .
+nether-ward acl audit --dir .</code></pre>
     </section>
 
     <!-- SECTION 14: INTEGRATION -->

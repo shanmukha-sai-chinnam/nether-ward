@@ -4,6 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use nether_ward::abr;
+use nether_ward::acl;
 use nether_ward::canary;
 use nether_ward::gateway;
 use nether_ward::mcp;
@@ -262,6 +263,33 @@ enum Commands {
         /// Output Markdown evaluation table to GitHub step summary path
         #[arg(long)]
         step_summary: Option<PathBuf>,
+    },
+
+    /// Enforce Resource Access Control Lists (ACL) and path confinement
+    Acl {
+        /// Action to perform: 'check', 'audit', or 'rules'
+        #[arg(default_value = "check")]
+        action: String,
+
+        /// Path to evaluate against ACL rules
+        #[arg(short, long)]
+        path: Option<String>,
+
+        /// Resource permission to check: 'read', 'write', 'execute', 'any'
+        #[arg(long, default_value = "read")]
+        perm: String,
+
+        /// Confine evaluation strictly to designated workspace root
+        #[arg(short, long)]
+        workspace: Option<PathBuf>,
+
+        /// Directory to recursively audit for escaping symlinks or forbidden files
+        #[arg(short, long)]
+        dir: Option<PathBuf>,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -849,6 +877,125 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 step_summary,
             )
             .await?;
+        }
+
+        Commands::Acl {
+            action,
+            path,
+            perm,
+            workspace,
+            dir,
+            json,
+        } => {
+            let acl_engine = if let Some(ws) = workspace {
+                acl::AclEngine::with_workspace(ws)
+            } else {
+                acl::AclEngine::default()
+            };
+
+            let resource_perm = match perm.to_lowercase().as_str() {
+                "write" => acl::ResourcePermission::Write,
+                "exec" | "execute" => acl::ResourcePermission::Execute,
+                "any" => acl::ResourcePermission::Any,
+                _ => acl::ResourcePermission::Read,
+            };
+
+            match action.to_lowercase().as_str() {
+                "audit" => {
+                    let target_dir =
+                        dir.unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+                    let violations = acl_engine.audit_directory(&target_dir);
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&violations)?);
+                    } else {
+                        eprintln!(
+                            "{} Directory ACL Symlink Audit for '{}':",
+                            "NETHER WARD ACL:".cyan().bold(),
+                            target_dir.display()
+                        );
+                        if violations.is_empty() {
+                            println!(
+                                "  {} Zero escaping symlinks or forbidden targets found.",
+                                "[OK]".green().bold()
+                            );
+                        } else {
+                            for v in &violations {
+                                eprintln!("  - {}", v);
+                            }
+                        }
+                    }
+                    if !violations.is_empty() {
+                        std::process::exit(1);
+                    }
+                }
+                "rules" => {
+                    if json {
+                        let patterns: Vec<String> = acl_engine
+                            .denied_patterns
+                            .iter()
+                            .map(|r| r.to_string())
+                            .collect();
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "denied_patterns": patterns,
+                                "workspace_roots": acl_engine.workspace_roots,
+                                "strict_confinement": acl_engine.strict_confinement
+                            })
+                        );
+                    } else {
+                        eprintln!(
+                            "{} Active Declarative ACL Blocklist Patterns:",
+                            "NETHER WARD ACL:".cyan().bold()
+                        );
+                        for r in &acl_engine.denied_patterns {
+                            println!("  - {}", r.as_str().yellow());
+                        }
+                    }
+                }
+                _ => {
+                    let target_path = path.unwrap_or_else(|| {
+                        eprintln!(
+                            "{}: Specify --path <PATH> to check against ACL rules.",
+                            "Error".red().bold()
+                        );
+                        std::process::exit(1);
+                    });
+
+                    match acl_engine.check_path(&target_path, resource_perm) {
+                        Ok(resolved) => {
+                            if json {
+                                println!(
+                                    "{}",
+                                    serde_json::json!({
+                                        "status": "allowed",
+                                        "requested_path": target_path,
+                                        "resolved_path": resolved,
+                                        "permission": resource_perm
+                                    })
+                                );
+                            } else {
+                                eprintln!(
+                                    "{} [{}] Access to '{}' (resolved: '{}') is ALLOWED.",
+                                    "ACL ALLOWED:".green().bold(),
+                                    resource_perm,
+                                    target_path,
+                                    resolved.display()
+                                );
+                            }
+                        }
+                        Err(violation) => {
+                            if json {
+                                println!("{}", serde_json::to_string_pretty(&violation)?);
+                            } else {
+                                eprintln!("{} {}", "ACL FORBIDDEN:".red().bold(), violation);
+                                eprintln!("  Recommendation: {}", violation.recommendation);
+                            }
+                            std::process::exit(1);
+                        }
+                    }
+                }
+            }
         }
     }
 
