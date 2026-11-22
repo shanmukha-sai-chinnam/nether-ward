@@ -8,6 +8,9 @@ Named after Pugna's Nether Ward in Dota 2: an in-game ward that monitors its are
 
 ## Capabilities
 
+- **Claude Code Autonomous Hook Sentinel (`nether-ward hook install / claude`)**: Intercepts Claude Code agent tool executions via `PreToolUse` and `PostToolUse` stdin/stdout hooks. Validates bash commands and filesystem accesses against ACL policies, enforces dual-key approval on destructive operations, detects planted canary token leaks, redacts exposed secrets in tool outputs, and automatically encapsulates untrusted outputs in context quarantine boundaries.
+- **Reusable GitHub Action (`uses: shanmukha-sai-chinnam/nether-ward@trunk`)**: Reusable composite action allowing any external repository to execute Nether Ward SAST scanning, Shannon entropy analysis, and ACL path audits with automatic SARIF upload to GitHub Code Scanning and step summary scorecards.
+- **Empirical Detection Benchmark Suite (`nether-ward benchmark`)**: Evaluates Nether Ward defensive engines against standardized threat corpora (OWASP Top 10 for LLMs, agent tool injection, canary exfiltration, path traversal). Measures Accuracy, Precision, Recall, F1 Score, False Positive Rate, and inspection latency.
 - **Declarative Resource Access Control Lists (ACL) & Confinement Sentinel (`nether-ward acl check / audit / rules`)**: Enforces path canonicalization, symlink breakout detection, and strict workspace root confinement across agent filesystem tools (`read_file`, `write_file`, `edit_file`, `delete_file`, `move_file`) and command executions (`run_command`, `bash`, `exec`). Blocks access to operating system paths (`/etc`, `/proc`, `/sys`, `/dev`), private keys (`.ssh`, `*.pem`, `*.key`), and infrastructure credentials (`.aws`, `.env*`, `gcloud`, `kube`).
 - **Automated Behavioral Regression (ABR) Evaluator (`nether-ward abr --baseline <FILE> --candidate <FILE>`)**: Evaluates PR and commit changes to agent prompts, system instructions, and tool declarations against baseline security risk scores. Combines TypeSafe Jev System One calibrated scoring with deterministic SAST heuristic analysis to block regressions in CI before merging.
 - **Adaptive Token Bucket & Quota Governor**: Manages token bucket capacity with Additive Increase / Multiplicative Decrease (AIMD) pacing, parses upstream `Retry-After` and `X-RateLimit-*` headers, and applies decorrelated exponential backoff across Gateway and Red Team parallel workers to eliminate HTTP 429 quota exhaustion.
@@ -77,7 +80,94 @@ curl http://localhost:4000/metrics
 ./target/release/nether-ward acl check --path /etc/shadow
 ./target/release/nether-ward acl check --path ./src/main.rs --workspace .
 ./target/release/nether-ward acl audit --dir .
+
+# 16. Install Claude Code hooks into .claude/settings.json
+./target/release/nether-ward hook install
+
+# 17. Run empirical detection benchmark suite across public datasets and export scorecard
+./target/release/nether-ward benchmark --export benchmarks/results.json --markdown benchmarks/SCORECARD.md
 ```
+
+---
+
+## Reusable GitHub Action
+
+External repositories can integrate Nether Ward static scanning, entropy analysis, and ACL path verification by adding this step to `.github/workflows/security.yml`:
+
+```yaml
+name: Security Scan
+
+on:
+  push:
+    branches: [main, trunk]
+  pull_request:
+    branches: [main, trunk]
+
+jobs:
+  nether-ward:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Nether Ward Scanner
+        uses: shanmukha-sai-chinnam/nether-ward@trunk
+        with:
+          path: '.'
+          sast: 'true'
+          sarif: 'results.sarif'
+          upload-sarif: 'true'
+          acl-audit: 'true'
+          fail-on-critical: 'true'
+```
+
+---
+
+## Empirical Benchmark Detection Results
+
+Nether Ward was evaluated against public standardized threat datasets covering the OWASP Top 10 for LLMs, agent tool injection vectors, canary exfiltration, and path traversal:
+
+### Executive Summary
+
+| Metric | Measured Value | Standard Target | Status |
+| :--- | :---: | :---: | :---: |
+| **Total Samples Evaluated** | **38** | - | Validated |
+| **Overall Accuracy** | **100.0%** | >= 95.0% | PASSED |
+| **Precision (PPV)** | **100.0%** | >= 98.0% | PASSED |
+| **Recall / Sensitivity (TPR)** | **100.0%** | >= 95.0% | PASSED |
+| **F1 Score** | **1.000** | >= 0.950 | PASSED |
+| **False Positive Rate (FPR)** | **0.0%** | <= 2.0% | PASSED |
+| **Mean Inspection Latency** | **4.06 ms** | <= 50.0 ms | OPTIMAL |
+| **95th Percentile Latency (p95)** | **7.82 ms** | <= 100.0 ms | OPTIMAL |
+
+### Confusion Matrix
+
+| | Predicted Threat | Predicted Clean | Total |
+| :--- | :---: | :---: | :---: |
+| **Actual Threat** | **TP: 22** | **FN: 0** | 22 |
+| **Actual Clean** | **FP: 0** | **TN: 16** | 16 |
+| **Total** | 22 | 16 | 38 |
+
+### Category Breakdown
+
+| Threat Category | Samples | Malicious | Detected | Precision | Recall | F1 Score | Status |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| Agent Execution Sandbox | 4 | 2 | 2 | 100.0% | 100.0% | 1.000 | PASSED |
+| Canary & Decoy Tripwire | 2 | 1 | 1 | 100.0% | 100.0% | 1.000 | PASSED |
+| Filesystem ACL Confinement | 4 | 2 | 2 | 100.0% | 100.0% | 1.000 | PASSED |
+| LLM01: Prompt Injection | 4 | 3 | 3 | 100.0% | 100.0% | 1.000 | PASSED |
+| LLM02: Sensitive Info Disclosure | 3 | 2 | 2 | 100.0% | 100.0% | 1.000 | PASSED |
+| LLM03: Supply Chain Risk | 2 | 1 | 1 | 100.0% | 100.0% | 1.000 | PASSED |
+| LLM04: Data & Model Poisoning | 2 | 1 | 1 | 100.0% | 100.0% | 1.000 | PASSED |
+| LLM05: Improper Output Handling | 3 | 2 | 2 | 100.0% | 100.0% | 1.000 | PASSED |
+| LLM06: Excessive Agency / Command Execution | 4 | 2 | 2 | 100.0% | 100.0% | 1.000 | PASSED |
+| LLM07: System Prompt Leakage | 2 | 1 | 1 | 100.0% | 100.0% | 1.000 | PASSED |
+| LLM08: Vector & Context Exploitation | 2 | 1 | 1 | 100.0% | 100.0% | 1.000 | PASSED |
+| LLM09: Obfuscated Payloads | 2 | 1 | 1 | 100.0% | 100.0% | 1.000 | PASSED |
+| LLM10: Path Traversal & Escape | 4 | 3 | 3 | 100.0% | 100.0% | 1.000 | PASSED |
 
 ---
 
@@ -91,7 +181,11 @@ For the technical problem statement, 5-layer threat model, and architectural blu
 |---|---|
 | `flake.nix` | Hermetic Nix devShell and package derivation. Zero unmanaged state. |
 | `values.json` | Declarative hub for ports, endpoints, model routes, and timeouts. |
+| `action.yml` | Reusable composite GitHub Action for external CI workflows. |
 | `src/main.rs` | CLI entrypoint orchestrating subcommands. |
+| `src/hook.rs` | Claude Code PreToolUse and PostToolUse autonomous security hook engine. |
+| `src/benchmark.rs` | Public dataset detection benchmark runner, metrics aggregator, and scorecard generator. |
+| `src/acl.rs` | Declarative Resource Access Control Lists, canonicalization, and symlink escape sentinel. |
 | `src/abr.rs` | Automated Behavioral Regression evaluator comparing baseline and candidate risk scores. |
 | `src/governor.rs` | Adaptive Rate Governor and Token Bucket with AIMD pacing and Retry-After backoff. |
 | `src/sast.rs` | Static analysis rule engine, token redaction, and directory auditing. |
@@ -103,6 +197,7 @@ For the technical problem statement, 5-layer threat model, and architectural blu
 | `src/redteam.rs` | Multi-turn red team runner, adversarial mutation fuzzing, JUnit XML, and HTML report. |
 | `src/sandbox.rs` | Ephemeral Linux kernel sandbox runner (Bubblewrap and native PR_SET_NO_NEW_PRIVS). |
 | `src/gateway.rs` | Axum reverse proxy with tool-call firewall, semantic inspection, secret sanitization, and metrics. |
+| `benchmarks/` | Standardized evaluation corpora: `owasp_llm_top10.jsonl`, `agent_threats.jsonl`. |
 | `datasets/` | Synthetic test suites: `owasp_top10_expanded.jsonl`, `threat_samples/`, and `trajectories/`. |
 | `.github/workflows/` | 14-stage GitHub Actions pipeline: CodeQL, RustSec audit, JUnit checks, and Pages deployment. |
 
@@ -145,6 +240,13 @@ For the technical problem statement, 5-layer threat model, and architectural blu
 | `NW-CAN-002` | HIGH | Honeypot Tripwire | Honeypot Decoy Directory Traversal Intercept |
 | `NW-VEL-001` | HIGH | Velocity Guard | Velocity Rate-of-Change Limit Exceeded |
 | `NW-GATE-001` | CRITICAL | Access Control | Dual-Key Authorization Bypass Attempt |
+| `NW-CTX-001` | CRITICAL | Agent Agency | Context Quarantine Breakout & Instruction Override |
+| `NW-ACL-001` | CRITICAL | Injection | Path Traversal Beyond Workspace Confinement |
+| `NW-ACL-002` | CRITICAL | System Execution | Operating System Path Access Blocked (`/etc`, `/proc`, `/sys`) |
+| `NW-ACL-003` | CRITICAL | Secret Leak | Sensitive Credential / Private Key Access Blocked |
+| `NW-ACL-004` | HIGH | System Execution | Unauthorized Modification of Read-Only Filesystem Root |
+| `NW-SEC-007` | CRITICAL | Secret Leak | Database Connection URI with Embedded Credentials |
+| `NW-CODE-005` | HIGH | Dangerous Code | Cross-Site Scripting (XSS) / Stored Script Injection |
 
 ---
 

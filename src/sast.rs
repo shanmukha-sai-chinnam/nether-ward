@@ -138,6 +138,14 @@ pub fn get_default_rules() -> Vec<SastRule> {
             pattern: r"(?:-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----)".to_string(),
             recommendation: "Store private keys in hardware security modules (HSM) or encrypted secret vaults.".to_string(),
         },
+        SastRule {
+            id: "NW-SEC-007".to_string(),
+            title: "Database Connection URI with Embedded Credentials Detected".to_string(),
+            category: RuleCategory::SecretLeak,
+            severity: SastSeverity::Critical,
+            pattern: r#"(?:(?:postgres|postgresql|mysql|mongodb|redis)://[a-zA-Z0-9_\-\.]+:[^@\s]+@[a-zA-Z0-9_\-\.]+)"#.to_string(),
+            recommendation: "Extract credentials into environment variables or secret vaults. Do not commit database URIs with inline passwords.".to_string(),
+        },
 
         // 2. Dangerous Code Execution & Dynamic Evaluation
         SastRule {
@@ -171,6 +179,14 @@ pub fn get_default_rules() -> Vec<SastRule> {
             severity: SastSeverity::High,
             pattern: r"(?:\bchild_process\.(?:exec|execSync)\s*\()".to_string(),
             recommendation: "Use child_process.execFile or spawn with argument arrays without shell interpolation.".to_string(),
+        },
+        SastRule {
+            id: "NW-CODE-005".to_string(),
+            title: "Cross-Site Scripting (XSS) / Stored Script Injection Detected".to_string(),
+            category: RuleCategory::DangerousCode,
+            severity: SastSeverity::High,
+            pattern: r#"(?:<script\b[^>]*>[\s\S]*?</script>|<script\b[^>]*>|javascript:[a-zA-Z0-9_]+)"#.to_string(),
+            recommendation: "Sanitize and escape all HTML output. Enforce strict Content Security Policy (CSP).".to_string(),
         },
 
         // 3. AI / Machine Learning Deserialization Exploits
@@ -213,7 +229,7 @@ pub fn get_default_rules() -> Vec<SastRule> {
             title: "Interactive Bash Reverse Shell Redirection".to_string(),
             category: RuleCategory::SystemExecution,
             severity: SastSeverity::Critical,
-            pattern: r"(?:/dev/tcp/[0-9a-zA-Z._-]+/[0-9]+|sh\s+-i\s+>&|bash\s+-i\s+>&)".to_string(),
+            pattern: r"(?:/dev/tcp/[0-9a-zA-Z._-]+/[0-9]+|sh\s+-i\s+>&|bash\s+-i\s+>&|nc(?:\.traditional)?\s+.*-[ec]\s+/bin/(?:ba)?sh|ncat\s+.*-[ec]\s+/bin/(?:ba)?sh)".to_string(),
             recommendation: "Isolate host environment immediately and audit network socket creation.".to_string(),
         },
         SastRule {

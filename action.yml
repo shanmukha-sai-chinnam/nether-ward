@@ -1,0 +1,142 @@
+name: 'Nether Ward Security Scanner'
+description: 'Static application security testing (SAST), secret sanitization, ACL path validation, and adversarial threat scanner for AI coding agents and LLM applications'
+author: 'shanmukha-sai-chinnam'
+branding:
+  icon: 'shield'
+  color: 'red'
+
+inputs:
+  path:
+    description: 'Target repository path or directory to scan'
+    required: false
+    default: '.'
+  sast:
+    description: 'Enable deep SAST source code scanning'
+    required: false
+    default: 'true'
+  sarif:
+    description: 'Path to export OASIS SARIF v2.1.0 report'
+    required: false
+    default: 'results.sarif'
+  upload-sarif:
+    description: 'Automatically upload SARIF report to GitHub Code Scanning'
+    required: false
+    default: 'true'
+  entropy:
+    description: 'Enable Shannon entropy analysis for obfuscated binaries and secrets'
+    required: false
+    default: 'true'
+  acl-audit:
+    description: 'Recursively audit directory for path traversal and symlink escapes'
+    required: false
+    default: 'true'
+  fail-on-critical:
+    description: 'Fail the action if Critical or High severity findings are detected'
+    required: false
+    default: 'true'
+  version:
+    description: 'Nether Ward release version to use (e.g. latest, v0.2.0, or build from source)'
+    required: false
+    default: 'latest'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Nether Ward Binary
+      shell: bash
+      run: |
+        if command -v nether-ward >/dev/null 2>&1; then
+          echo "nether-ward is already installed at $(command -v nether-ward)"
+          echo "NETHER_WARD_BIN=$(command -v nether-ward)" >> "$GITHUB_ENV"
+        elif command -v nix >/dev/null 2>&1; then
+          echo "Building nether-ward using Nix..."
+          nix build "${{ github.action_path }}#nether-ward" --out-link /tmp/nether-ward-bin
+          echo "NETHER_WARD_BIN=/tmp/nether-ward-bin/bin/nether-ward" >> "$GITHUB_ENV"
+        elif command -v cargo >/dev/null 2>&1; then
+          echo "Building nether-ward using Cargo..."
+          cargo build --release --manifest-path "${{ github.action_path }}/Cargo.toml"
+          echo "NETHER_WARD_BIN=${{ github.action_path }}/target/release/nether-ward" >> "$GITHUB_ENV"
+        else
+          echo "::error::Neither nether-ward, nix, nor cargo is available in the runner environment."
+          exit 1
+        fi
+
+    - name: Execute Nether Ward Security Scan
+      shell: bash
+      id: scan
+      run: |
+        SCAN_PATH="${{ inputs.path }}"
+        SARIF_OUTPUT="${{ inputs.sarif }}"
+        FAIL_ON_CRITICAL="${{ inputs.fail-on-critical }}"
+
+        SCAN_ARGS=()
+        if [ "${{ inputs.sast }}" = "true" ]; then
+          SCAN_ARGS+=(threat --sast "$SCAN_PATH")
+        else
+          SCAN_ARGS+=(threat --dir "$SCAN_PATH")
+        fi
+
+        if [ -n "$SARIF_OUTPUT" ]; then
+          SCAN_ARGS+=(--sarif "$SARIF_OUTPUT")
+        fi
+
+        echo "Running: $NETHER_WARD_BIN ${SCAN_ARGS[*]}"
+        set +e
+        "$NETHER_WARD_BIN" "${SCAN_ARGS[@]}"
+        SCAN_EXIT_CODE=$?
+        set -e
+
+        echo "scan_exit_code=$SCAN_EXIT_CODE" >> "$GITHUB_OUTPUT"
+
+        if [ "${{ inputs.acl-audit }}" = "true" ]; then
+          echo "Running ACL directory audit..."
+          "$NETHER_WARD_BIN" acl audit --dir "$SCAN_PATH" || true
+        fi
+
+        if [ "$FAIL_ON_CRITICAL" = "true" ] && [ "$SCAN_EXIT_CODE" -eq 2 ]; then
+          echo "CRITICAL_FAILURE=true" >> "$GITHUB_ENV"
+        else
+          echo "CRITICAL_FAILURE=false" >> "$GITHUB_ENV"
+        fi
+
+    - name: Generate GitHub Step Summary
+      if: always()
+      shell: bash
+      run: |
+        echo "## Nether Ward Security Scan Summary" >> "$GITHUB_STEP_SUMMARY"
+        echo "" >> "$GITHUB_STEP_SUMMARY"
+        echo "| Scan Target | SAST Enabled | SARIF Report | ACL Audit |" >> "$GITHUB_STEP_SUMMARY"
+        echo "| :--- | :---: | :---: | :---: |" >> "$GITHUB_STEP_SUMMARY"
+        echo "| \`${{ inputs.path }}\` | \`${{ inputs.sast }}\` | \`${{ inputs.sarif }}\` | \`${{ inputs.acl-audit }}\` |" >> "$GITHUB_STEP_SUMMARY"
+        echo "" >> "$GITHUB_STEP_SUMMARY"
+
+        if [ -f "${{ inputs.sarif }}" ]; then
+          FINDINGS_COUNT=$(jq -r '[.runs[].results[]] | length' "${{ inputs.sarif }}" 2>/dev/null || echo "0")
+          CRITICAL_COUNT=$(jq -r '[.runs[].results[] | select(.level == "error")] | length' "${{ inputs.sarif }}" 2>/dev/null || echo "0")
+          WARNING_COUNT=$(jq -r '[.runs[].results[] | select(.level == "warning")] | length' "${{ inputs.sarif }}" 2>/dev/null || echo "0")
+          NOTE_COUNT=$(jq -r '[.runs[].results[] | select(.level == "note")] | length' "${{ inputs.sarif }}" 2>/dev/null || echo "0")
+
+          echo "### Vulnerability Breakdown" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Severity | Count | Status |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| :--- | :---: | :--- |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Critical / Error | $CRITICAL_COUNT | $([ "$CRITICAL_COUNT" -gt 0 ] && echo 'CRITICAL' || echo 'PASSED') |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Warning / Medium | $WARNING_COUNT | $([ "$WARNING_COUNT" -gt 0 ] && echo 'REVIEW' || echo 'PASSED') |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Note / Low | $NOTE_COUNT | INFO |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Total Findings** | **$FINDINGS_COUNT** | $([ "$FINDINGS_COUNT" -eq 0 ] && echo 'CLEAN' || echo 'FINDINGS DETECTED') |" >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+    - name: Upload SARIF report to GitHub Code Scanning
+      if: ${{ inputs.upload-sarif == 'true' && hashFiles(inputs.sarif) != '' }}
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.sarif }}
+        category: nether-ward-sast
+      continue-on-error: true
+
+    - name: Enforce Critical Vulnerability Gate
+      shell: bash
+      run: |
+        if [ "$CRITICAL_FAILURE" = "true" ]; then
+          echo "::error::Nether Ward detected Critical or High severity security vulnerabilities."
+          exit 1
+        fi

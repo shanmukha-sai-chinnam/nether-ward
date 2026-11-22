@@ -215,8 +215,9 @@ impl CanaryRegistry {
 
         // Generic canary token signature detection (e.g. synthetic prefixes generated dynamically)
         if findings.is_empty() {
-            let re_aws_canary = Regex::new(r"AKIA_CANARY_[A-Z0-9]{16}").ok();
-            let re_api_canary = Regex::new(r"nw_canary_[a-zA-Z0-9_-]{16,}").ok();
+            let re_aws_canary =
+                Regex::new(r"(?:AKIA_CANARY_[A-Z0-9]{8,}|CANARY_NW_[A-Z0-9_]{8,})").ok();
+            let re_api_canary = Regex::new(r"nw_canary_[a-zA-Z0-9_-]{8,}").ok();
 
             if let Some(re) = re_aws_canary {
                 if let Some(mat) = re.find(text) {

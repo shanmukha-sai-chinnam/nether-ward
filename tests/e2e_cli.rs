@@ -444,3 +444,166 @@ fn test_e2e_cli_acl_check_allowed_and_blocked() {
 
     let _ = fs::remove_dir_all(&temp_dir);
 }
+
+#[test]
+fn test_e2e_cli_hook_install() {
+    let bin = env!("CARGO_BIN_EXE_nether-ward");
+    let temp_dir = std::env::temp_dir().join(format!("cli_hook_install_{}", std::process::id()));
+    fs::create_dir_all(&temp_dir).unwrap();
+
+    let output = Command::new(bin)
+        .args(["hook", "install", "--dir", temp_dir.to_str().unwrap()])
+        .output()
+        .expect("Failed to execute nether-ward hook install");
+
+    assert!(output.status.success());
+    let settings_file = temp_dir.join(".claude/settings.json");
+    assert!(settings_file.exists());
+
+    let content = fs::read_to_string(&settings_file).unwrap();
+    let json_val: serde_json::Value = serde_json::from_str(&content).unwrap();
+    assert_eq!(
+        json_val["hooks"]["PreToolUse"].as_str().unwrap(),
+        "nether-ward hook claude --pre-tool-use"
+    );
+    assert_eq!(
+        json_val["hooks"]["PostToolUse"].as_str().unwrap(),
+        "nether-ward hook claude --post-tool-use"
+    );
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_e2e_cli_hook_claude_pre_tool_use() {
+    use std::io::Write;
+    let bin = env!("CARGO_BIN_EXE_nether-ward");
+
+    // 1. Benign tool call should exit with 0
+    let benign_payload = serde_json::json!({
+        "tool_name": "Bash",
+        "tool_input": { "command": "echo hello" }
+    })
+    .to_string();
+
+    let mut child = Command::new(bin)
+        .args(["hook", "claude", "--pre-tool-use"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("Failed to spawn nether-ward hook claude");
+
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(benign_payload.as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+
+    // 2. Destructive command should be blocked (exit code 1)
+    let hostile_payload = serde_json::json!({
+        "tool_name": "Bash",
+        "tool_input": { "command": "rm -rf / --no-preserve-root" }
+    })
+    .to_string();
+
+    let mut child_blocked = Command::new(bin)
+        .args(["hook", "claude", "--pre-tool-use"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("Failed to spawn nether-ward hook claude");
+
+    child_blocked
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(hostile_payload.as_bytes())
+        .unwrap();
+    let output_blocked = child_blocked.wait_with_output().unwrap();
+    assert!(!output_blocked.status.success());
+    let stderr_str = String::from_utf8_lossy(&output_blocked.stderr);
+    assert!(stderr_str.contains("NETHER WARD SENTINEL"));
+    assert!(stderr_str.contains("NW-GATE-001"));
+}
+
+#[test]
+fn test_e2e_cli_hook_claude_post_tool_use() {
+    use std::io::Write;
+    let bin = env!("CARGO_BIN_EXE_nether-ward");
+
+    let post_payload = serde_json::json!({
+        "tool_name": "Bash",
+        "tool_input": { "command": "cat config.env" },
+        "tool_output": "API_KEY=AKIAIOSFODNN7EXAMPLE\nDATABASE_URL=postgres://localhost"
+    })
+    .to_string();
+
+    let mut child = Command::new(bin)
+        .args(["hook", "claude", "--post-tool-use"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("Failed to spawn nether-ward hook claude");
+
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(post_payload.as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+
+    let stdout_str = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout_str.contains("AKIAIOSFODNN7EXAMPLE"));
+    assert!(stdout_str.contains("AKIA***REDACTED***MPLE"));
+    assert!(stdout_str.contains("<<<NETHER_WARD_QUARANTINE_BOUNDARY"));
+    assert!(stdout_str.contains("<<</NETHER_WARD_QUARANTINE_BOUNDARY>>>"));
+}
+
+#[test]
+fn test_e2e_cli_benchmark_execution() {
+    let bin = env!("CARGO_BIN_EXE_nether-ward");
+    let temp_dir = std::env::temp_dir().join(format!("cli_bench_test_{}", std::process::id()));
+    fs::create_dir_all(&temp_dir).unwrap();
+
+    let export_json = temp_dir.join("results.json");
+    let export_md = temp_dir.join("scorecard.md");
+
+    let output = Command::new(bin)
+        .args([
+            "benchmark",
+            "--dataset",
+            "benchmarks/owasp_llm_top10.jsonl",
+            "--export",
+            export_json.to_str().unwrap(),
+            "--markdown",
+            export_md.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .expect("Failed to execute nether-ward benchmark");
+
+    assert!(output.status.success());
+    let stdout_str = String::from_utf8_lossy(&output.stdout);
+    let json_val: serde_json::Value =
+        serde_json::from_str(&stdout_str).expect("Valid benchmark JSON");
+
+    assert!(json_val["total_samples"].as_u64().unwrap() >= 20);
+    assert!(json_val["accuracy"].as_f64().unwrap() >= 0.90);
+    assert!(json_val["f1_score"].as_f64().unwrap() >= 0.90);
+
+    assert!(export_json.exists());
+    assert!(export_md.exists());
+    let md_content = fs::read_to_string(&export_md).unwrap();
+    assert!(md_content.contains("# Nether Ward Detection Benchmark Report"));
+    assert!(md_content.contains("Confusion Matrix"));
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}

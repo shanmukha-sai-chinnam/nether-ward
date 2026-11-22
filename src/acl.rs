@@ -109,7 +109,7 @@ impl AclEngine {
         Self {
             workspace_roots: canonical_roots,
             denied_patterns,
-            read_only_roots: Vec::new(),
+            read_only_roots: vec![PathBuf::from("/nix/store")],
             strict_confinement,
         }
     }

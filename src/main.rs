@@ -5,8 +5,10 @@ use std::path::PathBuf;
 
 use nether_ward::abr;
 use nether_ward::acl;
+use nether_ward::benchmark;
 use nether_ward::canary;
 use nether_ward::gateway;
+use nether_ward::hook;
 use nether_ward::mcp;
 use nether_ward::redteam;
 use nether_ward::sandbox;
@@ -290,6 +292,76 @@ enum Commands {
         /// Output results as JSON
         #[arg(long)]
         json: bool,
+    },
+
+    /// Intercept Claude Code tool execution events via hooks or manage hook installation
+    Hook {
+        #[command(subcommand)]
+        subcommand: HookSubcommands,
+    },
+
+    /// Run empirical detection benchmark suite across public datasets and generate scorecard
+    Benchmark {
+        /// Optional path to custom dataset file (.jsonl)
+        #[arg(short, long)]
+        dataset: Option<PathBuf>,
+
+        /// Export detailed benchmark results JSON to file
+        #[arg(short, long)]
+        export: Option<PathBuf>,
+
+        /// Export Markdown scorecard report to file
+        #[arg(short, long)]
+        markdown: Option<PathBuf>,
+
+        /// Output results as JSON to stdout
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum HookSubcommands {
+    /// Intercept Claude Code tool execution events via stdin/stdout
+    Claude {
+        /// Evaluate PreToolUse hook payload from stdin (exits with 1 if blocked)
+        #[arg(long)]
+        pre_tool_use: bool,
+
+        /// Evaluate PostToolUse hook payload from stdin (writes sanitized payload to stdout)
+        #[arg(long)]
+        post_tool_use: bool,
+
+        /// Enable in-flight secret sanitization in PostToolUse (pass --no-sanitize to disable)
+        #[arg(long, default_value_t = true, action = clap::ArgAction::SetTrue)]
+        sanitize: bool,
+
+        /// Disable secret sanitization in PostToolUse
+        #[arg(long)]
+        no_sanitize: bool,
+
+        /// Enable context quarantine wrapping in PostToolUse (pass --no-quarantine to disable)
+        #[arg(long, default_value_t = true, action = clap::ArgAction::SetTrue)]
+        quarantine: bool,
+
+        /// Disable context quarantine wrapping in PostToolUse
+        #[arg(long)]
+        no_quarantine: bool,
+
+        /// Target workspace directory for ACL confinement
+        #[arg(short, long)]
+        workspace: Option<PathBuf>,
+    },
+
+    /// Install Claude Code hook configuration into .claude/settings.json
+    Install {
+        /// Install globally to ~/.claude/settings.json instead of current workspace
+        #[arg(long)]
+        global: bool,
+
+        /// Target workspace directory
+        #[arg(short, long)]
+        dir: Option<PathBuf>,
     },
 }
 
@@ -996,6 +1068,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
+        }
+        Commands::Hook { subcommand } => match subcommand {
+            HookSubcommands::Claude {
+                pre_tool_use,
+                post_tool_use,
+                no_sanitize,
+                no_quarantine,
+                workspace,
+                ..
+            } => {
+                if pre_tool_use {
+                    hook::run_claude_pre_tool_use_cli(workspace.as_deref())?;
+                } else if post_tool_use {
+                    let do_sanitize = !no_sanitize;
+                    let do_quarantine = !no_quarantine;
+                    hook::run_claude_post_tool_use_cli(do_sanitize, do_quarantine)?;
+                } else {
+                    eprintln!(
+                        "{}: Specify either --pre-tool-use or --post-tool-use for Claude hook evaluation.",
+                        "Error".red().bold()
+                    );
+                    std::process::exit(1);
+                }
+            }
+            HookSubcommands::Install { global, dir } => {
+                let installed_path = hook::install_claude_hooks(global, dir.as_deref())?;
+                println!(
+                    "{} Installed Claude Code hooks into '{}'",
+                    "HOOKS INSTALLED:".green().bold(),
+                    installed_path.display()
+                );
+            }
+        },
+        Commands::Benchmark {
+            dataset,
+            export,
+            markdown,
+            json,
+        } => {
+            benchmark::run_benchmark_cli(
+                dataset.as_deref(),
+                export.as_deref(),
+                markdown.as_deref(),
+                json,
+            )?;
         }
     }
 

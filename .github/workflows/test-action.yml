@@ -1,0 +1,41 @@
+name: Test Nether Ward Action
+
+on:
+  push:
+    branches:
+      - trunk
+      - main
+  pull_request:
+    branches:
+      - trunk
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  test-action:
+    name: Self-Test Composite Action
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run Nether Ward Scanner Action
+        uses: ./
+        with:
+          path: 'src'
+          sast: 'true'
+          sarif: 'test-results.sarif'
+          upload-sarif: 'false'
+          fail-on-critical: 'false'
+
+      - name: Verify SARIF Generation
+        run: |
+          test -f test-results.sarif
+          echo "SARIF report successfully verified."

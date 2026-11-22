@@ -304,7 +304,7 @@ impl ContextQuarantine {
 
         // Check for indirect prompt injection control transfer phrases inside or adjacent to quarantine
         let re_override = Regex::new(
-            r#"(?i)(?:ignore\s+all\s+(?:previous|prior)\s+instructions|system\s+override\s+code\s*[:=]|you\s+must\s+now\s+act\s+as\s+an\s+unrestricted)"#,
+            r#"(?i)(?:ignore\s+all\s+(?:previous|prior)?\s*instructions|system\s+override\s+code\s*[:=]|you\s+must\s+now\s+act\s+as\s+an\s+unrestricted|attacker\s+instruction|ignore\s+all\s+constraints)"#,
         )
         .ok();
 
